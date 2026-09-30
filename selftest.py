@@ -543,6 +543,25 @@ def test_remoteok_remoteio_parsing():
     print("OK  test_remoteok_remoteio_parsing")
 
 
+def test_didi_parsing():
+    from collectors import didi
+    # formato real da API da DiDi em 30/09/2026 (lista + detalhe)
+    lista = {"success": True, "result": [
+        {"id": "21493", "jobTitle": "Commercial Planning Senior Analyst", "address": "Sao Paulo - Brazil"},
+        {"id": "9281", "jobTitle": "Backend Engineer", "address": "Sao Paulo - Brazil"},
+    ]}
+    detalhe = {"success": True, "result": {"hire": "435 - 99 FOOD LTDA", "teamRoleDetail": "<p>Time de planejamento.</p>",
+                                           "roleDetail": "<ol><li>Definir metas.</li></ol>", "eagerDetail": "None"}}
+    with patch("collectors.didi.requests.post", return_value=_FakeResp(lista)),             patch("collectors.didi.requests.get", return_value=_FakeResp(detalhe)),             patch("collectors.didi._ca_bundle", return_value=True):
+        jobs = didi.fetch_didi(term_filter=["planning"])
+    assert len(jobs) == 1
+    j = jobs[0]
+    assert j["empresa"] == "99 FOOD LTDA" and j["cidade"] == "Sao Paulo"
+    assert j["link"] == "https://careers.didiglobal.com/jobDetail:21493"
+    assert j["descricao"] == "Time de planejamento. Definir metas."
+    print("OK  test_didi_parsing")
+
+
 def test_title_filter():
     kw = ["negocio", "go to market", "estrateg"]
     assert title_matches("Analista de Novos Negócios Pleno", kw)  # acento ignorado
@@ -955,6 +974,7 @@ if __name__ == "__main__":
     test_weworkremotely_parsing()
     test_aceita_brasil()
     test_remoteok_remoteio_parsing()
+    test_didi_parsing()
     test_title_filter()
     test_descricao_completa()
     test_shopee_tiktok_parsing()

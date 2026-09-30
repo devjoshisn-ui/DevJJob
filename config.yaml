@@ -245,6 +245,13 @@ sources:
     enabled: true
     category: "remote-sales-and-marketing-jobs"   # veja outras categorias no site
 
+  # 99 (DiDi) — 30/09/2026: a 99 publica no site da DiDi (careers.didiglobal.com),
+  # não na Gupy. API JSON do próprio site (ver collectors/didi.py); ~100 vagas
+  # no Brasil, filtradas por title_keywords.
+  didi:
+    enabled: true
+    country: "Brazil"
+
   # --- Remoto internacional (29/09/2026): empresas de fora que aceitam quem
   # mora no Brasil/LATAM. Em todas as fontes remotas (Remotive e We Work
   # Remotely também) só entram vagas cujo local cita Brasil, LATAM, Américas

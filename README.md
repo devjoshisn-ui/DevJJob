@@ -1,12 +1,12 @@
 # Job Fit Screener — triagem de vagas com IA
 
-Pipeline em Python que **coleta ~3.500 vagas por rodada em 16 fontes**, pede a
+Pipeline em Python que **coleta ~3.500 vagas por rodada em 17 fontes**, pede a
 um modelo de decisão (Jev, da TypeSafe AI) uma nota de aderência de cada vaga
 ao meu currículo e às minhas preferências, e entrega um **ranking em Excel com
 links clicáveis** — separando o que vale aplicar hoje do que não vale o tempo.
 
 > *English summary: a Python pipeline that collects ~3,500 job postings per
-> run from 16 sources (public APIs, ATS boards, RSS), scores each one against
+> run from 17 sources (public APIs, ATS boards, RSS), scores each one against
 > a CV with an LLM-based decision API, and outputs a ranked, clickable Excel
 > report. Includes a labeled evaluation set used to raise ranking accuracy
 > from 52% to 70%, a versioned score cache, and an offline test suite.*
@@ -22,15 +22,15 @@ nos EUA.
 ## O que o projeto faz
 
 ```
- 16 fontes de vagas ──► coleta + deduplicação ──► filtros baratos ──► Jev (IA) ──► regras ──► Excel ranqueado
+ 17 fontes de vagas ──► coleta + deduplicação ──► filtros baratos ──► Jev (IA) ──► regras ──► Excel ranqueado
  (APIs, ATS, RSS)        ~3.500 vagas/rodada     título, local,      nota por     ajustes      aplicar_agora /
                                                  senioridade         vaga         determinís-  avaliar / não
                                                                                   ticos        aplicar
 ```
 
-1. **Coleta** vagas de 16 fontes: Gupy (via o MCP oficial para candidatos),
+1. **Coleta** vagas de 17 fontes: Gupy (via o MCP oficial para candidatos),
    Greenhouse, InHire, Lever, Ashby, Workday, SmartRecruiters, Teamtailor,
-   Amazon, Shopee, TikTok, Remotive, We Work Remotely, Remote OK, Remote.io e
+   Amazon, Shopee, TikTok, 99/DiDi, Remotive, We Work Remotely, Remote OK, Remote.io e
    beBee — ~115 empresas acompanhadas individualmente, mais a busca por termo.
 2. **Filtra antes de gastar IA**: palavras-chave de título (com exclusões como
    "estágio", "loja", "engenheiro"), e — nas vagas remotas internacionais —
@@ -67,9 +67,13 @@ nos EUA.
 - **Falha visível, não silenciosa.** Se uma fonte ligada volta vazia (site
   mudou ou bloqueou), o script avisa no terminal em vez de simplesmente sumir
   com as vagas dela.
+- **Segurança sem atalho.** O servidor de vagas da DiDi não envia o
+  certificado intermediário; em vez de desligar a verificação HTTPS (como o
+  próprio site faz), o coletor completa a cadeia com o intermediário oficial
+  da DigiCert.
 - **Resiliência.** Retentativas com backoff para 429/5xx/timeout na API de IA e
   coleta em paralelo nas fontes lentas.
-- **Testes offline.** `selftest.py` roda 20 testes sem rede nem chave: o
+- **Testes offline.** `selftest.py` roda 21 testes sem rede nem chave: o
   parsing de cada fonte (com respostas reais gravadas), filtros, regras de
   ajuste, cache e o fluxo completo com um cliente de IA simulado.
 
@@ -153,7 +157,7 @@ exportar_excel.py      # Excel formatado com links clicáveis
 calibrar.py            # acurácia do ranking contra um gabarito rotulado
 radar_cruzar.py        # /radar: vagas achadas na web x vagas já coletadas
 descobrir_ats.py       # /radar: descobre o sistema de vagas de uma empresa
-selftest.py            # 20 testes offline
+selftest.py            # 21 testes offline
 collectors/            # um coletor por fonte + utilitários (filtros, HTML, local)
 .claude/skills/radar/  # instruções do comando /radar
 config.yaml            # termos, filtros, fontes e empresas
@@ -161,13 +165,12 @@ config.yaml            # termos, filtros, fontes e empresas
 
 ## Limitações conhecidas
 
-- APIs não documentadas (InHire, Shopee, TikTok, Amazon, Workday) podem mudar
+- APIs não documentadas (InHire, Shopee, TikTok, DiDi, Amazon, Workday) podem mudar
   sem aviso; cada coletor tem comentários explicando como foi descoberto e
   como redescobrir.
 - beBee é leitura de HTML e já ficou fora do ar por alguns dias; o script
   avisa quando isso acontece.
 - Empresas cujas vagas não estão num sistema que o script lê só aparecem via
-  `/radar` — ex.: Americanas (vagas corporativas só no LinkedIn) e 99 (site
-  próprio da DiDi, careers.didiglobal.com).
+  `/radar` — ex.: Americanas (vagas corporativas só no LinkedIn).
 - A nota da IA é uma triagem, não uma decisão: as primeiras rodadas foram
   conferidas manualmente e o gabarito continua sendo a referência.

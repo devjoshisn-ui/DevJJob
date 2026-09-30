@@ -31,6 +31,7 @@ import yaml
 from collectors.amazon import fetch_amazon
 from collectors.ashby import fetch_ashby
 from collectors.bebee import fetch_bebee
+from collectors.didi import fetch_didi
 from collectors.greenhouse import fetch_greenhouse
 from collectors.gupy import fetch_gupy, fetch_gupy_empresa
 from collectors.inhire import fetch_inhire
@@ -325,6 +326,15 @@ def collect_jobs(config: dict) -> list[dict]:
             _add(jobs, seen, fetch_tiktok(term_filter=titulo_ok, limit=company_limit))
         except Exception as e:  # noqa: BLE001
             print(f"  [aviso] TikTok falhou: {e}", file=sys.stderr)
+
+    # 99 (DiDi): site de vagas próprio da DiDi, filtrado pelo país
+    if sources.get("didi", {}).get("enabled"):
+        try:
+            _add(jobs, seen, fetch_didi(
+                country=sources["didi"].get("country", "Brazil"), term_filter=titulo_ok, limit=company_limit
+            ))
+        except Exception as e:  # noqa: BLE001
+            print(f"  [aviso] DiDi/99 falhou: {e}", file=sys.stderr)
 
     if sources.get("workday", {}).get("enabled"):
         for site in sources["workday"].get("sites", []):
