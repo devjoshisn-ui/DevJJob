@@ -1,0 +1,17 @@
+# --- Dados pessoais: nunca publicar ---
+.env
+cv.txt
+*.docx
+preferencias.txt
+gabarito.csv
+output/
+
+# --- Rascunhos de testes antigos ---
+bees_compare.json
+new_role_compare.json
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/

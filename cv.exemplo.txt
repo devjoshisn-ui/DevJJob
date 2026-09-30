@@ -1,0 +1,27 @@
+NOME FICTÍCIO DA SILVA
+Business Analyst | Revenue Operations | E-commerce & Marketplace
+São Paulo/SP  ·  (00) 00000-0000  ·  email@exemplo.com  ·  linkedin.com/in/exemplo
+(CV de exemplo — copie este arquivo para cv.txt e cole o texto do SEU currículo.
+O cv.txt fica fora do git, pra não publicar dados pessoais.)
+
+RESUMO PROFISSIONAL
+Profissional de Administração com 8 anos de experiência conectando dados, operações e estratégia
+comercial em ambientes B2B e B2C. Experiência em operações de e-commerce e marketplace, Sales/Revenue
+Operations (forecast, BI, P&L) e iniciativas de Go-to-Market.
+
+EXPERIÊNCIA PROFISSIONAL
+Empresa Exemplo de E-commerce  |  Coordenador de Marketplace
+01/2022 – atual · São Paulo
+- Gestão da operação em Mercado Livre, Amazon e Shopee: pricing, estoque, campanhas e P&L por canal.
+- Dashboards de KPIs (GMV, conversão, margem, CAC) em Excel e Power BI para a diretoria.
+
+Empresa Exemplo de Software  |  Analista de Revenue Operations Sênior
+01/2018 – 12/2021 · São Paulo
+- Estruturação de forecast, funil e metas do time comercial no CRM.
+- Planejamento comercial anual e análises de performance por segmento.
+
+FORMAÇÃO
+Administração de Empresas — Universidade Exemplo
+
+IDIOMAS E FERRAMENTAS
+Inglês avançado · Excel avançado · Power BI · SQL básico · CRM (Salesforce/HubSpot)

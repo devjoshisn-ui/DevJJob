@@ -1,0 +1,173 @@
+# Job Fit Screener — triagem de vagas com IA
+
+Pipeline em Python que **coleta ~3.500 vagas por rodada em 16 fontes**, pede a
+um modelo de decisão (Jev, da TypeSafe AI) uma nota de aderência de cada vaga
+ao meu currículo e às minhas preferências, e entrega um **ranking em Excel com
+links clicáveis** — separando o que vale aplicar hoje do que não vale o tempo.
+
+> *English summary: a Python pipeline that collects ~3,500 job postings per
+> run from 16 sources (public APIs, ATS boards, RSS), scores each one against
+> a CV with an LLM-based decision API, and outputs a ranked, clickable Excel
+> report. Includes a labeled evaluation set used to raise ranking accuracy
+> from 52% to 70%, a versioned score cache, and an offline test suite.*
+
+## O problema
+
+Procurar vaga de Revenue Operations / Business Analyst / E-commerce significa
+abrir dezenas de sites, ler centenas de descrições e decidir, uma a uma, se
+vale a candidatura. A maior parte do tempo vai em vaga que não serve — vendedor
+com meta disfarçado de "Key Account", analista júnior, vaga só para quem mora
+nos EUA.
+
+## O que o projeto faz
+
+```
+ 16 fontes de vagas ──► coleta + deduplicação ──► filtros baratos ──► Jev (IA) ──► regras ──► Excel ranqueado
+ (APIs, ATS, RSS)        ~3.500 vagas/rodada     título, local,      nota por     ajustes      aplicar_agora /
+                                                 senioridade         vaga         determinís-  avaliar / não
+                                                                                  ticos        aplicar
+```
+
+1. **Coleta** vagas de 16 fontes: Gupy (via o MCP oficial para candidatos),
+   Greenhouse, InHire, Lever, Ashby, Workday, SmartRecruiters, Teamtailor,
+   Amazon, Shopee, TikTok, Remotive, We Work Remotely, Remote OK, Remote.io e
+   beBee — ~115 empresas acompanhadas individualmente, mais a busca por termo.
+2. **Filtra antes de gastar IA**: palavras-chave de título (com exclusões como
+   "estágio", "loja", "engenheiro"), e — nas vagas remotas internacionais —
+   só as que aceitam candidatos no Brasil/LATAM. Isso cortou ~48% das chamadas
+   à API sem perder nenhuma vaga "aplicar agora".
+3. **Pontua cada vaga** com o Jev, mandando currículo + vaga + preferências
+   ("quero / não quero"). A nota final combina aderência (55%), senioridade
+   (20%), ausência de gap crítico (15%) e confiança do modelo (10%).
+4. **Aplica regras determinísticas** onde a IA erra de forma previsível (ex.:
+   "analista júnior" nunca passa de "avaliar"; "especialista" é sempre
+   compatível com a senioridade) e registra o motivo numa coluna `ajuste`.
+5. **Gera o relatório**: CSV + Excel com cores por recomendação, filtros,
+   salário (quando a fonte informa) e link direto para a vaga.
+
+## Decisões de engenharia que valem destacar
+
+- **Avaliação com gabarito, não "achismo".** `calibrar.py` mede quantos pares
+  de vagas o modelo ordena igual a um gabarito rotulado à mão. Foi assim que
+  se provou que mandar a descrição completa + um bloco de preferências levava
+  o acerto de **52% para 70%**, e que o peso de requisitos técnicos precisava
+  cair.
+- **Cache versionado.** Cada nota fica salva com um hash de
+  (currículo + preferências + perguntas + tamanho do texto). Rodadas seguintes
+  só pontuam vagas novas (~1.100 de ~3.500); se o currículo ou as
+  preferências mudam, o hash muda e tudo é repontuado automaticamente. O
+  cache é gravado a cada 25 vagas, então uma queda de rede não perde trabalho.
+- **Sem navegador automatizado.** Toda fonte usa API pública (documentada ou
+  descoberta lendo o tráfego do próprio site), RSS ou HTML já renderizado no
+  servidor — mais leve e menos frágil que Selenium/Playwright.
+- **Respeito a termos de uso.** LinkedIn, Glassdoor e Indeed ficam de fora de
+  propósito (proíbem scraping). Sites com bloqueio anti-bot (hiring.cafe,
+  Mercado Livre) não são contornados. O Remote OK é sempre creditado com link,
+  como pedem os termos da API dele.
+- **Falha visível, não silenciosa.** Se uma fonte ligada volta vazia (site
+  mudou ou bloqueou), o script avisa no terminal em vez de simplesmente sumir
+  com as vagas dela.
+- **Resiliência.** Retentativas com backoff para 429/5xx/timeout na API de IA e
+  coleta em paralelo nas fontes lentas.
+- **Testes offline.** `selftest.py` roda 20 testes sem rede nem chave: o
+  parsing de cada fonte (com respostas reais gravadas), filtros, regras de
+  ajuste, cache e o fluxo completo com um cliente de IA simulado.
+
+## Radar: achando o que o script não vê
+
+Um teste comparando com o LinkedIn mostrou que só ~15% das vagas de lá
+estavam no pipeline — muitas empresas simplesmente não estavam na lista. O
+comando `/radar` (um *skill* do [Claude Code](https://claude.com/claude-code),
+em `.claude/skills/radar/`) resolve isso sob demanda:
+
+1. faz buscas na web (páginas de ATS, listagens públicas do LinkedIn, busca
+   aberta) com os cargos-alvo;
+2. `radar_cruzar.py` separa o que é **novo** do que o script já tem (com a
+   nota do Jev) e do que já apareceu antes — comparação tolerante a variações
+   de nome de empresa e título;
+3. confere se as vagas novas continuam abertas;
+4. `descobrir_ats.py` descobre em qual sistema de vagas a empresa publica e, se
+   for um que o script lê, a empresa entra no `config.yaml` — e passa a ser
+   coletada automaticamente dali em diante.
+
+## Como foi construído
+
+Projeto pessoal, desenvolvido em par com o **Claude Code** (IA de
+programação). Meu papel foi o de dono do produto: definir o problema e os
+critérios de uma boa vaga, rotular o gabarito de avaliação, decidir as regras
+(o que é "júnior", quando requisito técnico pesa, que fontes são aceitáveis) e
+validar cada rodada contra a minha própria leitura das vagas.
+
+## Como rodar
+
+Pré-requisitos: Python 3.10+ e uma chave da API do Jev
+([console.typesafe.ai](https://console.typesafe.ai/keys)). Sem chave, dá
+para rodar tudo em modo simulado com `--mock`.
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env              # e cole a chave em TYPESAFE_API_KEY
+cp cv.exemplo.txt cv.txt          # e cole o texto do seu currículo
+```
+
+Opcional: crie um `preferencias.txt` com o que você quer e não quer (o
+exemplo está no `config.yaml`, bloco `preferencias`) e um `gabarito.csv` no
+formato de `gabarito.exemplo.csv` para calibrar. **`cv.txt`,
+`preferencias.txt`, `gabarito.csv`, `.env` e `output/` ficam fora do git.**
+
+```bash
+python selftest.py                # testes offline, sem rede nem chave
+python screen.py --limit 3        # rodada curta com a API real
+python screen.py                  # rodada completa
+python screen.py --collect-only   # só coleta, sem pontuar
+python calibrar.py                # mede o acerto contra o gabarito
+```
+
+O relatório sai em `output/vagas_triadas_<data>.xlsx` (e `.csv`).
+
+### Colunas do relatório
+
+| Coluna | O que é |
+|---|---|
+| `recomendacao` | `aplicar_agora` / `avaliar` / `baixa_prioridade` / `nao_aplicar` |
+| `nota_fit` | 0 a 10 — aderência, senioridade, gap crítico e confiança, ponderados |
+| `aderencia_nivel` | explicação em texto do nível de aderência |
+| `senioridade_ok` / `gap_critico` | se o nível bate; se falta algum requisito obrigatório |
+| `trilha` | em que frente de carreira a vaga se encaixa |
+| `ajuste` | regra determinística que alterou a recomendação, se houve |
+| `salario` | quando a fonte informa (Gupy, vagas remotas internacionais) |
+| `titulo`, `empresa`, `cidade`, `fonte`, `publicado_em`, `link` | dados da vaga |
+
+### Configuração
+
+Tudo em `config.yaml`: termos de busca, palavras-chave e exclusões de título,
+fontes ligadas/desligadas e a lista de empresas de cada ATS (cada uma com um
+comentário de quando e por que entrou).
+
+## Estrutura
+
+```
+screen.py              # pipeline: coleta, cache, pontuação, regras, relatório
+jev_client.py          # cliente da API (com retentativas) + cliente simulado
+exportar_excel.py      # Excel formatado com links clicáveis
+calibrar.py            # acurácia do ranking contra um gabarito rotulado
+radar_cruzar.py        # /radar: vagas achadas na web x vagas já coletadas
+descobrir_ats.py       # /radar: descobre o sistema de vagas de uma empresa
+selftest.py            # 20 testes offline
+collectors/            # um coletor por fonte + utilitários (filtros, HTML, local)
+.claude/skills/radar/  # instruções do comando /radar
+config.yaml            # termos, filtros, fontes e empresas
+```
+
+## Limitações conhecidas
+
+- APIs não documentadas (InHire, Shopee, TikTok, Amazon, Workday) podem mudar
+  sem aviso; cada coletor tem comentários explicando como foi descoberto e
+  como redescobrir.
+- beBee é leitura de HTML e já ficou fora do ar por alguns dias; o script
+  avisa quando isso acontece.
+- Empresas cujas vagas não estão num sistema que o script lê só aparecem via
+  `/radar` — ex.: Americanas (vagas corporativas só no LinkedIn) e 99 (site
+  próprio da DiDi, careers.didiglobal.com).
+- A nota da IA é uma triagem, não uma decisão: as primeiras rodadas foram
+  conferidas manualmente e o gabarito continua sendo a referência.

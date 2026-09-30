@@ -1,0 +1,661 @@
+# Configuração da triagem. Edite os campos abaixo antes de rodar.
+
+# Caminho do arquivo com o texto do seu currículo (plain text).
+# Já vem preenchido com o texto extraído do CV_Michel_MESTRE.docx (OneDrive > CVs- Claude).
+# Se você atualizar o CV MESTRE, re-rode a extração (ver README, seção "Atualizar o CV")
+# para manter o cv.txt em dia.
+cv_path: "cv.txt"
+
+# Termos de busca — usados pelas fontes com busca por palavra-chave (Gupy,
+# beBee, We Work Remotely) e também como filtro de título nas fontes que só
+# fazem sentido por empresa (Greenhouse, InHire). Alinhados às 4 frentes do
+# seu próprio CV (RevOps, GTM/BD, Business Analyst/Estratégia,
+# E-commerce/Marketplace). Ajuste livremente.
+search_terms:
+  - "revenue operations"
+  - "business development"
+  - "analista de negocios"
+  - "estrategia"
+  - "growth"
+  - "parcerias"
+  - "e-commerce"
+  - "product operations"
+  - "marketplace"
+  # adicionados em 25/09/2026 — na Gupy, "go to market" e "go-to-market" trazem as
+  # mesmas vagas, mas "gtm" traz outras (ex.: "Analista de GTM Sênior")
+  - "go to market"
+  - "gtm"
+  # adicionados em 25/09/2026 a pedido do Michel
+  - "revops"
+  - "sales operations"
+  - "business analyst"
+  - "strategy"
+  - "planejamento comercial"
+  - "category"
+  - "vendor"
+  - "seller"
+  - "dtc"
+  - "d2c"
+
+# Suas preferências, enviadas ao Jev junto com o CV em cada avaliação. O CV diz
+# o que você JÁ FEZ; isto diz o que você QUER e NÃO QUER fazer — sem isso, o Jev
+# achava aderente, por exemplo, vaga de vendedor/hunter só porque o CV tem
+# experiência de seller em marketplace e prospecção de parcerias (caso real:
+# "Gerente de Contas, Marketplace" da Amazon ficava acima de "Retail Vendor
+# Management - VAP"). Mudar este texto faz o script repontuar todas as vagas
+# automaticamente na próxima rodada.
+# Calibrado com gabarito.csv (python calibrar.py): o bloco QUERO/NÃO QUERO
+# levou o acerto de pares de 52% pra 70%.
+#
+# PRIVACIDADE: se existir um arquivo `preferencias.txt` na pasta do projeto
+# (fora do git — ver .gitignore), ele substitui o texto abaixo. As
+# preferências reais ficam lá; o texto abaixo é só um EXEMPLO.
+preferencias: |
+  QUERO: vagas analíticas e estratégicas — Revenue/Sales Operations, Business
+  Analyst, estratégia, Go-to-Market, gestão de marketplace/e-commerce. Gestão
+  de contas ou parceiros é bem-vinda quando o foco é a performance de
+  parceiros já existentes (dados, métricas, P&L, pricing, negociação
+  estratégica).
+  NÃO QUERO: vagas cuja função central é vender ou prospectar novos clientes
+  com meta comercial individual (hunter, SDR/BDR, inside sales).
+  REQUISITOS TÉCNICOS: só contam como lacuna séria quando a vaga exige nível
+  avançado (ex.: SQL/Python avançado). Barreiras de localização, idioma ou
+  elegibilidade continuam valendo.
+  SENIORIDADE: vagas de nível pleno, sênior ou especialista são compatíveis;
+  analista/assistente júnior não é.
+
+# Filtro por título nas fontes POR EMPRESA (Greenhouse, InHire, Lever, Ashby,
+# Mercado Livre), que trazem todas as vagas abertas de cada empresa — inclusive
+# engenharia, jurídico etc. Só vagas cujo título contém algum destes trechos
+# vão pro Jev (sem diferenciar maiúsculas/acentos; "estrateg" pega
+# estratégia/estratégico). As fontes com busca por termo não passam por aqui.
+# Calibrado em 23/09/2026 contra a rodada de 21/09: mantém 30/30 vagas
+# "aplicar_agora" e 360/431 "avaliar" (as perdidas tinham nota ≤ 6,2 — compras,
+# fraude, controladoria, "Banco de Talentos"...), cortando ~48% das chamadas.
+# Deixe a lista vazia ([]) pra desligar o filtro e mandar tudo pro Jev.
+title_keywords:
+  # RevOps / vendas
+  - "revenue"
+  - "revops"
+  - "receita"
+  - "sales"
+  - "vendas"
+  - "comercia"      # pega comercial, comerciais e comercialização
+  - "commercial"
+  - "pricing"
+  - "precific"
+  - "crm"
+  # BD / parcerias / GTM
+  - "business"
+  - "negocio"
+  - "bizops"
+  - "parceri"
+  - "partner"
+  - "alianca"
+  - "alliance"
+  - "channel"
+  - "canais"
+  - "affiliate"
+  - "afiliad"
+  - "go-to-market"
+  - "go to market"
+  - "gtm"
+  - "expans"
+  - "originac"
+  - "account"
+  - "contas"
+  - "relacionamento"
+  - "relationship"
+  - "vendor"
+  - "seller"
+  - "merchant"
+  # estratégia / análise
+  - "estrateg"
+  - "strateg"
+  - "planejamento"
+  - "planning"
+  - "inteligencia"
+  - "intelligence"
+  - "insights"
+  - "analytics"
+  - "data analyst"
+  - "analista de dados"
+  - "fp&a"
+  - "m&a"
+  - "performance"
+  # growth / e-commerce / marketplace
+  - "growth"
+  - "crescimento"
+  - "marketplace"
+  - "e-commerce"
+  - "ecommerce"
+  - "online"
+  - "varejo"
+  - "retail"
+  - "category"
+  - "categoria"
+  - "trade"
+  - "merchandis"
+  - "marketing"
+  - "dtc"
+  - "d2c"
+  - "direct to consumer"
+  - "direct-to-consumer"
+  # produto / ops / gestão
+  - "product manag"
+  - "gerente de produto"
+  - "operation"   # 30/09/2026: singular pega "operations" e "Operation Manager" (TikTok)
+  - "operacoes"
+  - "operacao"      # singular: "Analista de Operação Comercial"
+  - "program manager"
+  - "project manag"
+  - "projetos"
+  - "customer success"
+  - "sucesso do cliente"
+  - "city manager"
+  - "country"
+  - "trainee"
+
+# Trechos de título que DESCARTAM a vaga antes do Jev, em todas as fontes —
+# mesmo que ela bata com title_keywords (ex.: "Supervisor de Vendas - Renner -
+# Jundiaí" bate com "vendas", mas é vaga de loja). Mesma regra: sem diferenciar
+# maiúsculas/acentos, trecho em qualquer parte do título. Criada em 25/09/2026
+# ao adicionar varejo (Renner, Boticário, C&A) e Shopee: das 512 vagas dessas
+# fontes que passavam no filtro, ~270 eram loja/logística/engenharia.
+# Cuidado com trechos curtos: "intern" pegaria "Internacional"; "loja" pegaria
+# "LOJAS RENNER | Analista de E-commerce" — por isso "loja " e "de loja".
+title_exclude:
+  # varejo / loja
+  - "loja "
+  - "de loja"
+  - "vendedor"
+  - "vendedora"
+  - "consultor de vendas"
+  - "consultora de vendas"
+  - "consultor(a) de vendas"
+  - "assistente de vendas"
+  - "supervisor de vendas"
+  - "supervisor(a) de vendas"
+  - "supervisor comercial"
+  - "forca de vendas"
+  - "forca vendas"
+  - "visual merchandising"
+  - "caixa"
+  - "fiscal"
+  - "promotor"
+  - "inauguracao"
+  # operacional / logística
+  - "operador"
+  - "operadora"
+  - "auxiliar"
+  - "motorista"
+  - "empilhadeira"
+  - "operacoes logisticas"   # só a operação em si — "Analista de Negócios | Logística" fica
+  - "intralogistic"
+  - "xpt"
+  - "esteira"
+  - "armazem"
+  # entrada de carreira
+  - "aprendiz"
+  - "estagi"
+  # engenharia / desenvolvimento ("developer" ficou de fora: pegaria
+  # "Partnerships Manager, AWS Developer Experience")
+  - "desenvolvedor"
+  - "desenvolvedora"
+  - "engenheir"
+  - "engineer"
+
+# Fontes de vagas habilitadas.
+sources:
+  # API pública da Gupy (jobName=termo). Cobre muitas empresas brasileiras.
+  gupy:
+    enabled: true
+    city: ""   # opcional, ex: "São Paulo"
+    # Limite próprio da Gupy, por termo (o limit_per_term geral lá embaixo vale
+    # pras outras fontes). Era 15 até 25/09/2026 — "e-commerce" tinha 213 vagas
+    # na Gupy e só 15 entravam; "growth", 57.
+    limit_per_term: 150
+    # Empresas grandes na Gupy de onde puxar TODAS as vagas (filtradas por
+    # title_keywords), além da busca por termo. O nome tem que ser o da career
+    # page na Gupy, exatamente (conferido em 25/09/2026). Riachuelo aparece na
+    # Gupy mas com 0 vagas pelo nome "Riachuelo" — ficou de fora.
+    empresas:
+      # 30/09/2026: Americanas SAIU da Gupy (americanas.gupy.io dá 404, 0 vagas).
+      # Pelo carreiras.americanas.io, loja -> Pandapé/InfoJobs e escritório ->
+      # só LinkedIn. Não dá pra coletar; fica coberta pelo /radar.
+      - "Lojas Renner"
+      - "Cia. Hering"
+      - "Grupo Boticário"
+      - "C&A Brasil"
+      # -- adicionadas em 29/09/2026, a partir do teste com o LinkedIn (vagas do
+      # perfil que o script não tinha) --
+      - "Hypera Pharma"          # "Analista de Planejamento de Vendas Sênior"
+      - "Fast Shop S/A"          # e-commerce/varejo
+      - "Porto"                  # "Analista Planejamento Comercial Sênior (Porto Bank)"
+      - "Farmácias Pague Menos"  # "Analista de Planejamento Comercial Sênior"
+      - "Swift"                  # "Analista de Planejamento e Inteligência de Vendas SR"
+
+  # API pública do Remotive. Vagas remotas/internacionais em inglês.
+  remotive:
+    enabled: true
+    category: ""   # opcional, ex: "business"
+
+  # Feed RSS oficial do We Work Remotely. Vagas remotas/internacionais.
+  weworkremotely:
+    enabled: true
+    category: "remote-sales-and-marketing-jobs"   # veja outras categorias no site
+
+  # --- Remoto internacional (29/09/2026): empresas de fora que aceitam quem
+  # mora no Brasil/LATAM. Em todas as fontes remotas (Remotive e We Work
+  # Remotely também) só entram vagas cujo local cita Brasil, LATAM, Américas
+  # ou "anywhere/worldwide" — "USA only", "Europe" etc. ficam de fora.
+  # hiring.cafe ficou de fora: bloqueia acesso automatizado (Cloudflare).
+
+  # API pública do Remote OK. Os termos de uso pedem crédito e link pra página
+  # da vaga no Remote OK — o link salvo é sempre o deles.
+  remoteok:
+    enabled: true
+    # tags buscadas (além da lista geral); sem busca por termo, então o
+    # filtro de título (title_keywords) é que decide o que vai pro Jev
+    tags: ["sales", "marketing", "operations", "business", "strategy", "ecommerce",
+           "analyst", "account manager", "growth", "product manager", "customer success"]
+
+  # Remote.io: páginas de listagem por local x área (até 20 vagas cada).
+  remoteio:
+    enabled: true
+    locais: ["brazil", "latin-america", "anywhere"]
+    areas: ["", "operations", "sales-partnerships", "business-development", "marketing",
+            "product", "finance", "data", "executive-c-suite", "other"]
+
+  # Scraping best-effort do HTML server-rendered da busca da beBee (sem API
+  # pública). Cada termo de busca vira até bebee.max_pages_per_term páginas
+  # de resultado (a beBee costuma trazer ~10-20 vagas por página).
+  # 25/09/2026: a busca da beBee parou de devolver vagas pra acesso
+  # automatizado (a página abre, mas a lista vem vazia — funcionava em 23/09).
+  # Mantida ligada: se voltar, as vagas reaparecem sozinhas; enquanto isso o
+  # screen.py avisa "fonte 'bebee' ... não trouxe nenhuma vaga".
+  bebee:
+    enabled: true
+    max_pages_per_term: 2
+
+  # API pública não documentada oficialmente, mas usada pelo próprio
+  # amazon.jobs (descoberta inspecionando a rede em 21/09/2026). Busca por
+  # termo, igual à Gupy/Remotive.
+  amazon:
+    enabled: true
+    country: "BRA"
+
+  # Scraping best-effort do HTML da página de vagas do Mercado Livre/Mercado
+  # Pago — sem API pública, e com risco de bloqueio antibot (ver aviso em
+  # collectors/mercadolivre.py). Não tem busca por termo — traz as
+  # max_pages primeiras páginas de vagas do Brasil e deixa o Jev filtrar.
+  # DESLIGADO em 23/09/2026: a página careers-meli.mercadolibre.com não traz mais
+  # as vagas no HTML — elas vêm do Eightfold (mercadolibre.eightfold.ai) via
+  # JavaScript, e a API do Eightfold responde 403 pra acesso automatizado, mesmo
+  # simulando navegador. Só daria com automação de navegador real (fora do
+  # escopo, igual LinkedIn). Pra vagas do Meli, buscar direto no site.
+  mercadolivre:
+    enabled: false
+
+  # Shopee Brasil — API JSON do próprio careers.shopee.com.br (ver
+  # collectors/shopee.py). Traz ~500 vagas do Brasil (muitas operacionais),
+  # filtradas por title_keywords antes de ir pro Jev. Adicionada em 25/09/2026.
+  shopee:
+    enabled: true
+
+  # TikTok (São Paulo e Brasília) — API JSON pública do lifeattiktok.com (ver
+  # collectors/tiktok.py). Adicionada em 25/09/2026 a pedido do Michel: a
+  # exclusão original (ver README) supunha que precisava de navegador, mas a
+  # API responde a uma chamada HTTP simples, sem login.
+  tiktok:
+    enabled: true
+
+  # Workday (myworkdayjobs.com) — ATS de empresas grandes; todo site Workday tem
+  # a mesma API pública (ver collectors/workday.py). O coletor fica só com as
+  # vagas do Brasil (pelos filtros de localização do próprio site). "url" é a
+  # página pública de vagas da empresa. Adicionado em 29/09/2026, a partir do
+  # teste com o LinkedIn (vagas de PayPal que o script não via).
+  workday:
+    enabled: true
+    sites:
+      - empresa: "PayPal"
+        url: "https://paypal.wd1.myworkdayjobs.com/jobs"          # "Sr Analyst, Revenue Operations" SP
+      - empresa: "Natura"
+        url: "https://natura.wd501.myworkdayjobs.com/NaturaCarreiras"  # CRO E-commerce LATAM, Marketplace
+      - empresa: "Rappi"
+        url: "https://rappi.wd12.myworkdayjobs.com/Rappi_jobs"   # hoje só vagas operacionais no BR
+      - empresa: "Unilever"
+        url: "https://unilever.wd3.myworkdayjobs.com/Unilever_Experienced_Professionals"
+      - empresa: "Kimberly-Clark"
+        url: "https://kimberlyclark.wd1.myworkdayjobs.com/GLOBAL"  # "Especialista em Planejamento de RGM"
+
+  # Teamtailor — cada empresa tem um site de carreiras com feed RSS público em
+  # <url>/jobs.rss (ver collectors/teamtailor.py). Adicionado em 29/09/2026,
+  # depois que o Jack & Jill achou a vaga de Gerente de E-commerce (Marketplace)
+  # da Jet — empresa que não estava no radar. Reconhece-se um site Teamtailor
+  # pelos links /jobs.rss e /connect na página de vagas.
+  teamtailor:
+    enabled: true
+    sites:
+      - empresa: "Jet Brasil"
+        url: "https://careers.jetshr.com.br"   # mobilidade elétrica; "Gerente de E-commerce (Marketplace) e Importação"
+      - empresa: "Loft"
+        url: "https://loft.teamtailor.com"     # proptech; "Gerente de ... Processos Comerciais | Revenue Operations"
+
+  # SmartRecruiters — API pública oficial (ver collectors/smartrecruiters.py).
+  # "id" é o nome que aparece em jobs.smartrecruiters.com/<id>/...
+  smartrecruiters:
+    enabled: true
+    empresas:
+      - empresa: "Serasa Experian"
+        id: "Experian"        # ~200 vagas no Brasil (29/09/2026)
+    max_pages: 2
+
+  # Greenhouse não tem busca entre empresas — cada empresa tem seu "board"
+  # (o token que aparece em boards.greenhouse.io/<token>). Liste aqui as
+  # empresas que você quer acompanhar; as vagas de cada uma são filtradas
+  # pelos search_terms no título.
+  # Tokens confirmados em 21/09/2026 (busquei a página de vagas real de cada
+  # empresa antes de incluir — nenhum é chute). Empresas do seu pedido que
+  # NÃO usam Greenhouse (ficaram de fora): Loft, Mercado Livre/Mercado Pago e
+  # Rappi (Workday), BTG Pactual LA/Chile (unidades fora do Brasil).
+  #
+  # CORREÇÃO (22/09/2026): "abinbev" e "bees" são boards SEPARADOS na
+  # Greenhouse — o board "abinbev" NÃO inclui as vagas da BEES (confirmado:
+  # um job ID real do board "bees" devolve 404 no board "abinbev"). A nota
+  # antiga aqui estava errada. "bees" tem 42 vagas abertas, incluindo Product
+  # Strategy Specialist e Strategic Growth Specialist (os processos que o
+  # Michel já fez). Achado ao comparar 4 vagas específicas da BEES a pedido
+  # dele — ver compare_jobs.py.
+  greenhouse:
+    enabled: true
+    boards:
+      - "abinbev"           # AB InBev | Growth Group (fintech/TaDa/Ze Delivery etc.)
+      - "bees"              # BEES (B2B commerce da AB InBev) — board próprio, separado do "abinbev"
+      - "c6bank"            # C6 Bank
+      - "xpinc"             # XP Inc.
+      - "hotmartcareersbr"  # Hotmart (Brasil)
+      - "hotmartcareersen"  # Hotmart (vagas em inglês/globais)
+      - "stone"             # Stone
+      - "gympass"           # Wellhub (ex-Gympass)
+      - "clara"             # Clara (fintech corporativa, México/LatAm)
+      - "btgpactual"        # BTG Pactual
+      - "quintoandar"       # QuintoAndar
+      - "ifoodcarreiras"    # iFood
+      - "nubank"            # Nubank
+      - "creditas"          # Creditas
+      - "ebanx"             # EBANX
+      - "vtex"              # VTEX
+      - "rdstation"         # RD Station — tem até vaga de "Revenue Operations" aberta
+      - "wildlifestudios"   # Wildlife Studios
+      - "pagarme"           # Pagar.me (grupo Stone)
+      - "arcoeducacao"      # 30/09/2026 via /radar — Arco Educação: "Especialista em Revenue Operations",
+                            # Planejamento e Performance Sênior/Coordenação, Analista de Negócios Sênior
+      # -- adicionadas em 21/09/2026, rodada de scale-ups/startups --
+      - "zenvia"            # Zenvia (CPaaS/martech)
+      - "blip-global"       # Take Blip (conversational AI) — tinha vaga de "Revenue Operations"
+      - "remotecom"         # Remote.com (RH global, contrata remoto p/ LatAm)
+      - "agibank"           # Agibank (banco digital)
+      - "jusbrasil"         # Jusbrasil (legaltech)
+      - "isaac"             # isaac (fintech de pagamento escolar)
+      # -- adicionadas em 21/09/2026, rodada de expansão gringas + startups --
+      - "arenaim"           # Arena.im (EUA, plataforma de engajamento/comunidade) — tinha vaga de BDR Brasil remoto
+      - "kunumi"             # Kunumi (IA/data) — tinha vaga de "AI Strategist – Operações"
+      - "zupinnovation"      # Zup Innovation (grupo Itaú, consultoria/tech) — atividade confirmada, maioria eng.
+      - "arcoeducacao"       # Arco Educação (edtech) — tinha vaga de Inteligência Comercial
+      # -- adicionadas em 22/09/2026, rodada "gringas entrando no Brasil" + europeias --
+      - "ebury"              # Ebury (fintech de FX/cross-border, sede Londres/Málaga, controlada pelo Santander) —
+                              # lançou o "Ebury Bank" no Brasil e comprou a Bexs; VÁRIAS vagas comerciais abertas em
+                              # SP agora (Business Developer FX, Senior Sales Executive eFX, Customer Relations) —
+                              # melhor achado desta rodada, tanto como oportunidade BR quanto trampolim pra Europa
+                              # (escritórios confirmados em 12+ cidades europeias)
+      - "figma"              # Figma (EUA, design/produtividade) — abriu hub LatAm em São Paulo em mai/2025;
+                              # vagas atuais em SP são GTM-adjacentes (Business Recruiter, Customer Enablement
+                              # Manager, Executive Assistant Sales), não puramente comerciais — vale monitorar
+      # -- adicionada em 22/09/2026, a pedido do Michel ("bolt.new") --
+      - "stackblitz"         # StackBlitz / Bolt.new (EUA, ferramenta de codificação com IA) — 10 vagas remotas,
+                              # sem restrição geográfica explícita mas também sem confirmar elegibilidade Brasil;
+                              # tem algumas GTM-adjacentes (Community Manager, Senior Product Marketing Manager)
+
+  # Mesma lógica do Greenhouse: a InHire é um ATS por empresa
+  # (<empresa>.inhire.app/vagas), sem busca entre empresas. "tenant" é o
+  # subdomínio da empresa. Todas as vagas abertas de cada tenant entram
+  # (sem filtro de termo, já que o volume por empresa costuma ser pequeno).
+  inhire:
+    enabled: true
+    tenants:
+      - "vr"
+      - "housi"
+      - "cerc"
+      - "cobli"
+      - "mottu"
+      - "cielo"                  # 30/09/2026 via /radar — Cielo: "Analista de Performance Comercial Sênior",
+                                  # "Analista Sênior de Estratégia e Ofertas (CRM)"
+      # -- adicionadas em 21/09/2026, rodada de scale-ups/startups --
+      - "nuvemshop-tiendanube"   # Nuvemshop/Tiendanube (e-commerce)
+      - "unico"                  # unico (verificação de identidade)
+      - "solfacil"               # Solfácil (fintech de energia solar)
+      - "sanar"                  # Sanar (edtech de medicina) — tenant não 100% confirmado, se vier vazio pode não ser esse
+      # -- adicionadas em 21/09/2026, rodada de marcas D2C (ver nota abaixo) --
+      - "insiderstore"           # Insider Store (moda multimarcas) — também está na Gupy,
+                                  # mas aqui traz TODAS as vagas, sem depender de bater com search_terms
+      - "sallve"                 # Sallve (skincare D2C)
+      - "bocarosa"               # Boca Rosa Company (cosméticos D2C, marca da Bianca Andrade)
+      # -- adicionadas em 21/09/2026, rodada de expansão de startups (ver README) --
+      - "azos"                   # Azos (insurtech) — vagas confirmadas ao vivo
+      - "pier"                   # Pier Seguradora (insurtech) — board vivo, só banco de talentos visto até agora
+      - "cora"                   # Cora (fintech PJ) — vagas de estratégia/PM confirmadas
+      - "appmax"                 # Appmax (checkout/pagamentos) — vaga comercial confirmada
+      - "qitech"                 # QI Tech (banking-as-a-service) — vagas comerciais/risco confirmadas
+      - "celcoin"                # Celcoin (banking-as-a-service) — vaga de relacionamento comercial confirmada
+      - "contabilizei"           # Contabilizei (contabilidade SaaS p/ PJ) — board vivo, ~125 vagas indexadas
+      - "superlogica"            # Superlógica (SaaS gestão de condomínios/imóveis) — vaga de exec. de vendas confirmada
+      - "neoway"                 # Neoway (data/BI) — board vivo
+      - "carreiras-semantix"     # Semantix (data/analytics) — atenção: slug NÃO é "semantix"
+      - "vitru"                  # Vitru Educação (edtech ensino superior) — board vivo
+      - "v4company"              # V4 Company (martech/marketing digital) — vaga de BDR/SDR confirmada
+      - "advbox"                 # Advbox (legaltech, software p/ escritórios de advocacia) — vagas de CS confirmadas
+      - "clavis"                 # Clavis Segurança da Informação (cybersecurity) — board vivo
+      - "frete"                  # Frete.com/Fretebras/Cargo X (logtech) — board vivo
+      - "yampi"                  # Yampi (plataforma de checkout/loja, concorrente Nuvemshop) — vaga de CS confirmada
+      - "lastlink"               # Lastlink (produtos digitais/economia de criadores, concorrente Hotmart) — vaga de CS confirmada
+      - "auvotecnologia"         # Auvo Tecnologia (SaaS gestão de equipes externas) — vagas de CS/CX confirmadas, incl. remoto LatAm
+      # -- adicionadas em 22/09/2026, rodada de startups brasileiras VC-backed (pedido do Michel) --
+      - "alice"                  # Alice (healthtech, planos de saúde empresariais, 100k+ membros) — vagas de
+                                  # Business Analyst-Operations e Analista de Revenue Ops confirmadas. CORREÇÃO:
+                                  # uma nota antiga deste arquivo dizia que a Alice não tinha ATS suportado
+                                  # encontrado — estava desatualizada/errada, confirmado agora ao vivo.
+      - "gabriel"                 # Gabriel (segtech, câmeras conectadas a autoridades, rodada de R$66M liderada
+                                  # pelo SoftBank) — vagas de Controller Financeiro e PeopleOps confirmadas
+      - "nomadglobal"             # Nomad (fintech, conta internacional, 3,8M clientes) — vagas de Risk & Control
+                                  # e Growth Marketing confirmadas
+      - "kanastra"                # Kanastra (fintech infra para fundos estruturados/securitização, sócios
+                                  # incluem Itaú/Kaszek/Valor Capital) — vagas confirmadas
+      - "sanii"                   # Sanii (healthtech, cuidado domiciliar de idosos com IA) — vagas de Analista
+                                  # de CX confirmadas
+      - "pxcenter"                # PX.Center / Motorista PX (logtech, marketplace de motoristas/ajudantes de
+                                  # frete, captou R$250M em 2025) — vagas confirmadas
+      - "superfrete"              # SuperFrete (logtech, frete p/ pequenos/médios e-commerces) — vagas confirmadas
+      - "deepesg"                 # Deep ESG (B2B SaaS de dados de impacto socioambiental) — vagas confirmadas
+      - "certta"                  # Certta / CAF (B2B SaaS antifraude, verificação de identidade/KYC, investida
+                                  # por L4 e B3) — vagas confirmadas
+      # -- adicionadas em 25/09/2026, rodada e-commerce/marketplace (pedido do Michel) --
+      - "magazineluiza"           # Magazine Luiza (varejo/marketplace, inclui aiqfome) — confirmado: "Gerente de
+                                  # Contas Marketplace Sr – Foco Mercado Livre"
+      - "magalu"                  # Magalu Cloud / Luizalabs (braço de tech do Magalu) — confirmado
+      - "dafiti"                  # Dafiti (moda online, GFG) — confirmado: "Analista de Revenue Operations Sênior",
+                                  # "Analista Sênior de RGM (Revenue Growth Management)"
+      - "olist"                   # Olist (plataforma de venda em marketplaces) — confirmado
+      - "enjoei"                  # Enjoei (marketplace de usados) — confirmado
+      - "loggi"                   # Loggi (logística de e-commerce) — confirmado
+      - "raiadrogasil"            # RD Saúde (Raia Drogasil) — confirmado, maioria tech hoje
+      # -- adicionadas em 29/09/2026, a partir do teste com o LinkedIn --
+      - "riachuelo"               # Riachuelo — ~220 vagas (muita loja, title_exclude filtra); "Analista de
+                                  # Planejamento Comercial Sênior" visto no LinkedIn
+      - "alelo"                   # Alelo — "Analista de Planejamento Comercial Sênior"
+      - "sympla"                  # Sympla — "Analista de Sales Operations Pleno/Sênior"
+      - "praso"                   # Praso (B2B marketplace) — "Analista de Revenue Operations"
+      # Procuradas e SEM ATS público suportado (25/09/2026): Casas Bahia, Netshoes,
+      # KaBuM, Carrefour, Natura, Centauro/SBF, Leroy Merlin, Temu, AliExpress.
+      # "shein" e "via" existem no Greenhouse, mas são outras empresas/vagas só
+      # nos EUA (Via Transportation) — não adicionar.
+    fetch_descriptions: true   # false = mais rápido, mas sem texto da vaga pro Jev avaliar
+
+  # API pública oficial da Lever (Postings API) — mesma lógica do Greenhouse/
+  # InHire: cada empresa tem seu próprio board (jobs.lever.co/<slug>), sem
+  # busca entre empresas. Adicionada em 21/09/2026 pra cobrir mais empresas
+  # (inclusive "gringas" com vagas remotas pro Brasil) que usam Lever em vez
+  # de Greenhouse/InHire/Gupy.
+  lever:
+    enabled: true
+    boards:
+      - "loadsmart"   # Loadsmart (EUA, freight-tech) — vagas remotas Brasil confirmadas: Account Manager, Pricing Analyst, Demand Gen
+      - "justos"      # Justos (insurtech) — atividade confirmada
+      - "flashapp"    # Flash (HR tech/benefícios) — vagas de Inteligência/Performance Comercial confirmadas
+      - "tryjeeves"    # 30/09/2026 via /radar — Jeeves (fintech): "Revenue Operations Analyst" e
+                       # "Strategy & Ops Analyst" em São Paulo (o board também tem vagas de fora do Brasil)
+      - "ciandt"       # CI&T (consultoria/tech, atua globalmente) — vagas remoto Brasil confirmadas (histórico do projeto, sem coletor até agora)
+
+  # API pública da Ashby (Job Board API) — mesma lógica das outras fontes
+  # "por empresa" (jobs.ashbyhq.com/<slug>). Adicionada em 21/09/2026 — é uma
+  # ATS bem comum entre startups/scale-ups de tech (globais e brasileiras,
+  # ex.: Nubank e Doctoralia já usam).
+  ashby:
+    enabled: true
+    boards:
+      - "darkroom"    # Darkroom (EUA/Portugal, growth marketing) — vaga de Creator Manager Brasil remoto confirmada
+      - "docplanner"  # Docplanner/Doctoralia (29/09/2026) — "Revenue Operations Specialist | GTM Ops" no LinkedIn;
+                      # vagas em Rio/SP/Curitiba e remoto Brasil
+      - "connectly"   # Connectly (EUA/Colômbia, conversational commerce) — vaga de Account Manager Brasil confirmada
+      - "oyster"       # Oyster HR (global, plataforma de EOR/RH) — vaga de CS Manager Americas lista São Paulo/Brasil
+      - "belvo"        # Belvo (México/Espanha, fintech infra Open Finance) — time em SP, vagas de BDR/Sales Manager confirmadas
+      - "telepatia"    # Telepatía (healthtech, IA para transcrição médica/prontuário, opera Brasil + Colômbia) —
+                        # adicionada em 22/09/2026, 15 vagas confirmadas (São Paulo, Bogotá, Medellín)
+
+  # Nota sobre a rodada de expansão de 21/09/2026 (empresas "gringas" remotas +
+  # mais startups brasileiras, pedido por Michel depois da primeira rodada real
+  # do pipeline funcionar). Toda entrada acima (Greenhouse/InHire/Lever/Ashby
+  # novos) foi verificada batendo direto na API/board de cada empresa — nada
+  # foi chutado a partir do nome. Duas ressalvas importantes:
+  # 1. Vagas remotas de empresas gringas pro Brasil em áreas comerciais/
+  #    estratégia são raras e somem rápido (muitas pistas promissoras — Deel,
+  #    Kraken, Bitso, Kavak, HubSpot, GitLab, Wise, Airbnb e outras dezenas —
+  #    tinham boards Greenhouse/Lever/Ashby confirmados mas SEM vaga aberta
+  #    remoto-Brasil em Sales/RevOps/BD/Estratégia no momento da checagem, ou
+  #    a vaga específica já tinha fechado. Vale rodar essa pesquisa de novo
+  #    periodicamente. A InHire, em particular, parece ser quase 100% usada
+  #    só por empresas brasileiras — nenhuma gringa encontrada nela.
+  # 2. Algumas entradas da InHire (pier, contabilizei, neoway, frete, clavis)
+  #    foram confirmadas com o board respondendo e indexado, mas sem uma vaga
+  #    específica fixada no momento da checagem (a InHire renderiza via JS, o
+  #    que dificulta confirmar 100% sem abrir no navegador) — podem vir vazias
+  #    nessa rodada e ter vaga na próxima, mantidas por serem board legítimo.
+  # Setores sem representante confirmado até 21/09/2026 (tentado e sem
+  # sucesso): proptech (Loft usa TeamTailor, EmCasa não resolveu) e agtech
+  # (Traive, Strider, TerraMagna — sem rastro de ATS público). Healthtech
+  # ESTAVA nessa lista (Alice, Vittude, Nilo Saúde "sem ATS suportado
+  # encontrado") mas a nota estava desatualizada/errada — a Alice usa InHire
+  # e foi confirmada e adicionada na rodada de 22/09/2026 abaixo.
+
+  # Rodada de 22/09/2026 — pedido do Michel de aumentar a base em 3 frentes:
+  # (1) mais startups brasileiras investidas por VC, (2) startups estrangeiras
+  # ABRINDO operação agora no Brasil (diferente da rodada de 21/09, que
+  # buscava empresas gringas JÁ estabelecidas com vaga remota-Brasil), e
+  # (3) empresas europeias pequenas/médias com vaga no Brasil, pensando em
+  # usar isso como trampolim pra uma futura mobilidade interna pra Europa.
+  # Toda entrada nova (greenhouse.boards, inhire.tenants, ashby.boards acima)
+  # foi verificada ao vivo, nada foi chutado.
+  #
+  # Achado principal: "ebury" (Greenhouse) — fintech de FX cross-border,
+  # sede Londres/Málaga, controlada pelo Santander — tem VÁRIAS vagas
+  # comerciais abertas em São Paulo agora, e escritórios em 12+ cidades
+  # europeias (bom encaixe tanto pra oportunidade imediata quanto pro
+  # objetivo de médio prazo de ir trabalhar na Europa).
+  #
+  # Das 15 empresas brasileiras que o Michel nomeou diretamente, o resultado
+  # foi misto — a maioria é early-stage demais pra ter ATS público:
+  # - Confirmadas: Alice (InHire), Gabriel (InHire), Telepatía (Ashby).
+  # - Já cobertas automaticamente via Gupy (não precisam de entrada aqui):
+  #   PagaLeve, ContaSimples (mas o tenant InHire "contasimples" existe e
+  #   está "temporariamente inativo").
+  # - Board InHire existe mas está "temporariamente inativo" (sem vagas
+  #   visíveis no momento, não vale adicionar): "justos" (Justo/Justos,
+  #   seguro auto — atenção, é uma empresa DIFERENTE do "justos" que já
+  #   está em lever.boards, que é uma insurtech distinta com o mesmo nome).
+  # - Sem ATS suportado encontrado (recrutamento por e-mail, plataforma
+  #   própria, ou early-stage demais pra ter página de carreiras pública):
+  #   Tempo, Magie, Iglu, Merama, Vendah, Zenpli, Comp, Cayena.
+  # - "Bolt": ambíguo — a única "Bolt" encontrada é a fintech de checkout
+  #   AMERICANA (bolt.com), não parece ser uma startup brasileira. Vale o
+  #   Michel confirmar qual empresa ele quis dizer.
+  # ATUALIZAÇÃO (22/09/2026, mesmo dia): Michel esclareceu as duas
+  # ambiguidades acima.
+  # - "Iglu" era na verdade "Iugu" (fintech de meios de pagamento/gestão
+  #   financeira, adquirida pelo próprio ecossistema Nubank em 2020) — usa
+  #   Gupy (`vempraiugu.gupy.io`), já coberta automaticamente, sem precisar
+  #   de entrada aqui.
+  # - "Bolt" tinha DUAS candidatas: a brasileira bolt.com.br (maquininha de
+  #   cartão/POS do Grupo Adriano Cobuccio) NÃO tem página de carreiras nem
+  #   ATS identificável — ficou de fora, sem informação suficiente. A gringa
+  #   "Bolt.new" (ferramenta de codificação com IA da StackBlitz) usa
+  #   Greenhouse (token "stackblitz") e foi adicionada acima.
+  #
+  # Sugestões adicionais confirmadas (startups BR VC-backed que o próprio
+  # Claude encontrou, já incluídas acima): Nomad, Kanastra, Sanii, PX.Center/
+  # Motorista PX, SuperFrete, Deep ESG, Certta/CAF.
+  #
+  # Startups estrangeiras "entrando agora" no Brasil — além da Ebury:
+  # "figma" (Greenhouse, abriu hub LatAm em SP em 2025, vagas GTM-adjacentes)
+  # foi adicionada. Board confirmado mas SEM vaga em Brasil ainda no momento
+  # da checagem (vale reconferir periodicamente, sinal de contratação
+  # comercial no Brasil é forte pras duas): "cognition" (Ashby — criadora do
+  # Devin, abriu escritório em SP em set/2026) e "airwallex" (Ashby — fintech
+  # australiana, obteve licença do Banco Central em 2025). Candidatas fortes
+  # sem ATS suportada (aplicar direto pelo site/LinkedIn, pipeline não
+  # cobre): Revolut (carreiras próprio, vagas comerciais abertas em SP
+  # agora), Pomelo (fintech argentina expandindo BR/México), Fever/FeverUp
+  # (ATS próprio).
+  #
+  # Europeias pequenas/médias como trampolim pra Europa: além da Ebury (o
+  # melhor achado), boards confirmados mas sem vaga relevante no Brasil no
+  # momento (vale reconferir): Mirakl (França), Trustly (Suécia), Feedzai
+  # (Portugal, só vaga de engenharia), Celonis (Alemanha), Storyblok
+  # (Áustria), Emplifi (Rep. Tcheca), Pleo (Dinamarca), Ankorstore (França),
+  # Qonto (França).
+
+  # Nota sobre marcas D2C (moda, cosméticos, e-commerce): pedido separadamente
+  # por Michel em 21/09/2026, em duas rodadas (marcas grandes/tradicionais,
+  # depois marcas D2C menores/mais novas). A maioria das marcas D2C/varejo
+  # grandes já usa Gupy — Amaro, Farm Rio e Reserva (grupo AZZAS 2154/Grupo
+  # Soma), Track&Field, Grendene/Melissa, Alpargatas/Havaianas, O Boticário,
+  # Enjoei, Elo7, Dafiti, Netshoes/Centauro (Grupo SBF), Wine.com.br, GPA e
+  # Via Varejo/Casas Bahia. Como a busca da Gupy já é entre TODAS as empresas
+  # da plataforma (não só as listadas aqui), essas marcas JÁ aparecem
+  # automaticamente nas buscas por e-commerce/marketplace/growth — não
+  # precisam de entrada própria em greenhouse.boards/inhire.tenants.
+  #
+  # Já as marcas D2C menores/mais novas (a maioria fundada ou popularizada
+  # nos últimos anos, sem o porte de uma Natura ou Boticário) tendem a usar
+  # InHire em vez de Gupy — Insider Store, Sallve e Boca Rosa Company foram
+  # confirmadas assim e entraram em inhire.tenants. Bruna Tavares/BT, WEPINK,
+  # Puravida, Chilli Beans e Growth Supplements não tiveram nenhuma
+  # plataforma identificável nas buscas — ficaram de fora por falta de
+  # confirmação, não por decisão (pode valer conferir de novo mais pra
+  # frente, ou Michel pode confirmar a plataforma se souber).
+  #
+  # Além do inhire.tenants, a mudança real desta rodada foi adicionar
+  # "marketplace" aos search_terms (acima), que beneficia todas as fontes
+  # por palavra-chave. Magazine Luiza/Época Cosméticos e Natura usam
+  # plataformas próprias/fechadas — não dá pra cobrir automaticamente.
+
+# Quantas vagas buscar por termo, por fonte (nas fontes que aceitam limite).
+limit_per_term: 15
+
+# Modelo do Jev a usar.
+jev_model: "jev-latest"
+
+# Nota mínima (0-10) para a vaga entrar no relatório final. Use 0 para ver tudo.
+min_score: 0
+
+# Onde salvar o relatório (CSV). A data é adicionada automaticamente ao nome.
+output_dir: "output"

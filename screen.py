@@ -1,0 +1,669 @@
+#!/usr/bin/env python3
+"""
+Triagem de vagas contra o CV usando o Jev (TypeSafe AI).
+
+Coleta vagas de fontes públicas (Gupy, Remotive), pede ao Jev uma nota de
+aderência + recomendação para cada uma contra o seu currículo, e salva um
+CSV ranqueado.
+
+Uso:
+    python screen.py                  # roda com a API real (precisa de TYPESAFE_API_KEY)
+    python screen.py --mock           # roda offline, sem chave, para testar o pipeline
+    python screen.py --config outro.yaml
+    python screen.py --limit 5        # só 5 vagas por termo/fonte e por empresa, para um teste rápido
+    python screen.py --no-cache       # repontua tudo, ignorando output/historico.json
+    python screen.py --collect-only   # só coleta (output/vagas_coletadas.json), sem Jev
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import datetime as dt
+import hashlib
+import json
+import re
+import sys
+from collections import Counter
+from pathlib import Path
+
+import yaml
+
+from collectors.amazon import fetch_amazon
+from collectors.ashby import fetch_ashby
+from collectors.bebee import fetch_bebee
+from collectors.greenhouse import fetch_greenhouse
+from collectors.gupy import fetch_gupy, fetch_gupy_empresa
+from collectors.inhire import fetch_inhire
+from collectors.lever import fetch_lever
+from collectors.mercadolivre import fetch_mercadolivre
+from collectors.remoteio import fetch_remoteio
+from collectors.remoteok import fetch_remoteok
+from collectors.remotive import fetch_remotive
+from collectors.shopee import fetch_shopee
+from collectors.smartrecruiters import fetch_smartrecruiters
+from collectors.teamtailor import fetch_teamtailor
+from collectors.tiktok import fetch_tiktok
+from collectors.weworkremotely import fetch_weworkremotely
+from collectors.workday import fetch_workday
+from collectors._util import _fold, title_filter, title_matches
+from exportar_excel import write_xlsx
+from jev_client import JevClient, JevError, MockJevClient
+
+# Era 2500 até 23/09/2026 — cortava 95-100% das vagas da Greenhouse e da Ashby,
+# justamente na parte dos requisitos (que costuma vir no fim).
+MAX_DESCRICAO_CHARS = 8000
+
+TRILHAS = {
+    "revenue_operations": "Revenue/Sales Operations, BI, forecasting, funil, métricas SaaS (MRR/ARR/CAC/LTV)",
+    "gtm_bd": "Go-to-Market, Business Development, parcerias estratégicas, originação de negócios",
+    "business_analyst_estrategia": "Business analyst, estratégia corporativa, consultoria, análise de dados",
+    "ecommerce_marketplace": "E-commerce, marketplace, growth D2C/DTC, marketing de performance",
+    "produto_ops": "Product Operations, Product Strategy",
+    "outro": "Não se encaixa claramente em nenhuma trilha acima",
+}
+
+RECOMENDACOES = {
+    "aplicar_agora": "Vale montar CV e aplicar já — forte aderência, sem bloqueios óbvios",
+    "avaliar": "Vale considerar, mas com ressalvas — ler a vaga com calma antes de aplicar",
+    "baixa_prioridade": "Aderência fraca — só aplicar se faltarem opções melhores",
+    "nao_aplicar": "Não vale o esforço de aplicar — desalinhado com o perfil",
+}
+
+RECOMENDACAO_ORDEM = {"aplicar_agora": 0, "avaliar": 1, "baixa_prioridade": 2, "nao_aplicar": 3}
+
+# Regra do Michel (25/09/2026): analista/assistente JÚNIOR não bate com a
+# senioridade dele, então no máximo "avaliar" (sem excluir). Cargos de gestão
+# com "júnior" (Gestor/Coordenador/Gerente Júnior) ficam de fora de propósito —
+# costumam ser senioridade maior que analista pleno/sênior. "Especialista" também
+# nunca é rebaixada, seja qual for o nível depois (Júnior, I, II...) — pra ele
+# especialista sempre é condizente com a senioridade dele.
+_CARGO_OPERACIONAL_RE = re.compile(r"\b(analista|analyst|assistente|assistant|auxiliar)\b", re.IGNORECASE)
+_JUNIOR_RE = re.compile(r"\b(j[uú]nior|jr)\b", re.IGNORECASE)
+
+
+def ajustar_recomendacao(r: dict) -> dict:
+    """Regras determinísticas aplicadas por cima da recomendação do Jev.
+    Preenche `ajuste` com o motivo quando mexe na vaga."""
+    r.setdefault("ajuste", "")
+    titulo = r.get("titulo") or ""
+    if (
+        r.get("recomendacao") == "aplicar_agora"
+        and _CARGO_OPERACIONAL_RE.search(titulo)
+        and _JUNIOR_RE.search(titulo)
+    ):
+        r["recomendacao"] = "avaliar"
+        r["ajuste"] = "rebaixada de aplicar_agora: analista/assistente júnior"
+    return r
+
+
+def build_questions(com_preferencias: bool = False):
+    questions = _base_questions()
+    if com_preferencias:
+        # `preferencias` (config.yaml) diz o que o candidato quer e NÃO quer fazer —
+        # sem isso o Jev só compara CV x vaga e pode achar aderente uma vaga cuja
+        # função central o candidato não exerce (ex.: vendas com meta).
+        for q in questions.values():
+            q["instructions"]["preferencias"] = "`preferencias`"
+        questions["aderencia"]["instructions"]["question"] = (
+            "Considerando o currículo em `cv` e as preferências do candidato em `preferencias`, "
+            "quão aderente esse candidato é aos requisitos e ao escopo real da vaga `vaga`? "
+            "Se a função central da vaga for algo que `preferencias` diz que o candidato não "
+            "exerce, a aderência é baixa mesmo que haja pontos de contato no currículo."
+        )
+        questions["recomendacao"]["instructions"]["question"] = (
+            "Dado o currículo em `cv`, as preferências do candidato em `preferencias` e a vaga "
+            "`vaga`, qual a recomendação final sobre aplicar a essa vaga?"
+        )
+    return questions
+
+
+def _base_questions():
+    return {
+        "aderencia": {
+            "type": "score",
+            "instructions": {
+                "vaga": "`vaga`",
+                "question": "Considerando o currículo em `cv`, quão aderente esse candidato é "
+                "aos requisitos e ao escopo real da vaga `vaga`?",
+            },
+            "criteria": [
+                "Sem aderência real — área de atuação totalmente diferente",
+                "Aderência fraca — poucos pontos de contato com os requisitos centrais",
+                "Aderência moderada — cobre parte dos requisitos centrais, com lacunas relevantes",
+                "Aderência boa — cobre a maior parte dos requisitos centrais, lacunas menores",
+                "Aderência excelente — cobre praticamente todos os requisitos centrais",
+            ],
+        },
+        "senioridade_compativel": {
+            "type": "noul",
+            "instructions": {
+                "vaga": "`vaga`",
+                "question": "A senioridade exigida pela vaga `vaga` é compatível com a experiência "
+                "de carreira relatada em `cv` (nem júnior demais, nem sênior demais para o candidato)?",
+            },
+            "criteria": {
+                "true": "Nível de senioridade da vaga compatível com a experiência do candidato",
+                "false": "Descompasso claro de senioridade (vaga muito júnior ou muito sênior)",
+            },
+        },
+        "gap_critico": {
+            "type": "noul",
+            "instructions": {
+                "vaga": "`vaga`",
+                "question": "Existe algum requisito obrigatório na vaga `vaga` (ferramenta nomeada, "
+                "certificação, idioma em nível específico, tempo mínimo em um setor, elegibilidade "
+                "ou relocation) que claramente não é coberto pelo currículo em `cv`?",
+            },
+        },
+        "trilha": {
+            "type": "choice",
+            "instructions": {
+                "vaga": "`vaga`",
+                "question": "Em qual trilha de atuação do candidato (descritas em `cv`) essa vaga "
+                "`vaga` melhor se encaixa?",
+            },
+            "criteria": TRILHAS,
+        },
+        "recomendacao": {
+            "type": "choice",
+            "instructions": {
+                "vaga": "`vaga`",
+                "question": "Dado o currículo em `cv` e a vaga `vaga`, qual a recomendação final "
+                "sobre aplicar a essa vaga?",
+            },
+            "criteria": RECOMENDACOES,
+        },
+    }
+
+
+def normalize_key(job: dict) -> str:
+    # sem acento/maiúsculas: a mesma vaga pode vir de fontes diferentes como
+    # "Solfacil" e "Solfácil"
+    return f"{_fold(job['empresa']).strip()}|{_fold(job['titulo']).strip()}"
+
+
+def _add(jobs: list[dict], seen: set, found: list[dict]) -> None:
+    for j in found:
+        key = normalize_key(j)
+        if key not in seen and j["titulo"]:
+            seen.add(key)
+            jobs.append(j)
+
+
+def collect_jobs(config: dict) -> list[dict]:
+    jobs: list[dict] = []
+    seen: set = set()
+    sources = config.get("sources", {})
+    terms = config["search_terms"]
+    limit = config.get("limit_per_term", 15)
+
+    # --- fontes com busca por palavra-chave: uma chamada por termo ---
+    for term in terms:
+        if sources.get("gupy", {}).get("enabled"):
+            # a Gupy tem limite próprio (limit_per_term dentro de sources.gupy): com
+            # o geral de 15, "e-commerce" trazia 15 de 213 vagas. Em teste com
+            # --limit, vale o limite do teste.
+            gupy_limit = (
+                limit if config.get("limit_per_company") is not None
+                else sources["gupy"].get("limit_per_term", limit)
+            )
+            try:
+                _add(jobs, seen, fetch_gupy(term, limit=gupy_limit, city=sources["gupy"].get("city", "")))
+            except Exception as e:  # noqa: BLE001
+                print(f"  [aviso] Gupy falhou para '{term}': {e}", file=sys.stderr)
+
+        if sources.get("remotive", {}).get("enabled"):
+            try:
+                _add(jobs, seen, fetch_remotive(term, category=sources["remotive"].get("category", ""), limit=limit))
+            except Exception as e:  # noqa: BLE001
+                print(f"  [aviso] Remotive falhou para '{term}': {e}", file=sys.stderr)
+
+        if sources.get("weworkremotely", {}).get("enabled"):
+            try:
+                _add(
+                    jobs,
+                    seen,
+                    fetch_weworkremotely(term, category=sources["weworkremotely"].get("category", ""), limit=limit),
+                )
+            except Exception as e:  # noqa: BLE001
+                print(f"  [aviso] We Work Remotely falhou para '{term}': {e}", file=sys.stderr)
+
+        if sources.get("bebee", {}).get("enabled"):
+            try:
+                _add(jobs, seen, fetch_bebee(term, max_pages=sources["bebee"].get("max_pages_per_term", 2)))
+            except Exception as e:  # noqa: BLE001
+                print(f"  [aviso] beBee falhou para '{term}': {e}", file=sys.stderr)
+
+        if sources.get("amazon", {}).get("enabled"):
+            try:
+                _add(
+                    jobs,
+                    seen,
+                    fetch_amazon(term, limit=limit, country=sources["amazon"].get("country", "BRA")),
+                )
+            except Exception as e:  # noqa: BLE001
+                print(f"  [aviso] Amazon falhou para '{term}': {e}", file=sys.stderr)
+
+    # --- fontes por empresa / por página (sem busca por termo): trazem todas as
+    # vagas abertas, então passam pelo filtro de título (title_keywords) e, em
+    # testes com --limit, por um limite de vagas por empresa ---
+    keywords = config.get("title_keywords") or []
+    company_limit = config.get("limit_per_company")  # None = sem limite
+    # title_exclude: vagas de loja, logística, engenharia etc. que batem com
+    # alguma keyword ("vendas", "operações") mas nunca servem — descartadas antes
+    # do Jev (e, na InHire/Shopee, antes até de buscar a descrição)
+    excludes = config.get("title_exclude") or []
+    titulo_ok = title_filter(keywords, excludes)
+
+    def _filtered(found: list[dict]) -> list[dict]:
+        found = [j for j in found if titulo_ok(j["titulo"])]
+        return found[:company_limit] if company_limit is not None else found
+
+    # Mercado Livre: sem busca por termo (ver collectors/mercadolivre.py),
+    # traz as N primeiras páginas de vagas do Brasil uma única vez
+    if sources.get("mercadolivre", {}).get("enabled"):
+        try:
+            _add(
+                jobs,
+                seen,
+                _filtered(fetch_mercadolivre(max_pages=sources["mercadolivre"].get("max_pages", 2))),
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"  [aviso] Mercado Livre falhou: {e}", file=sys.stderr)
+
+    if sources.get("greenhouse", {}).get("enabled"):
+        for board in sources["greenhouse"].get("boards", []):
+            try:
+                _add(jobs, seen, _filtered(fetch_greenhouse(board, term_filter=titulo_ok)))
+            except Exception as e:  # noqa: BLE001
+                print(f"  [aviso] Greenhouse falhou para '{board}': {e}", file=sys.stderr)
+
+    if sources.get("inhire", {}).get("enabled"):
+        fetch_desc = sources["inhire"].get("fetch_descriptions", True)
+        for tenant in sources["inhire"].get("tenants", []):
+            try:
+                # filtro e limite dentro do coletor, pra não buscar descrição de vaga descartada
+                found = fetch_inhire(
+                    tenant, term_filter=titulo_ok, fetch_descriptions=fetch_desc, limit=company_limit
+                )
+                _add(jobs, seen, found)
+            except Exception as e:  # noqa: BLE001
+                print(f"  [aviso] InHire falhou para '{tenant}': {e}", file=sys.stderr)
+
+    if sources.get("lever", {}).get("enabled"):
+        for board in sources["lever"].get("boards", []):
+            try:
+                _add(jobs, seen, _filtered(fetch_lever(board)))
+            except Exception as e:  # noqa: BLE001
+                print(f"  [aviso] Lever falhou para '{board}': {e}", file=sys.stderr)
+
+    if sources.get("ashby", {}).get("enabled"):
+        for board in sources["ashby"].get("boards", []):
+            try:
+                _add(jobs, seen, _filtered(fetch_ashby(board)))
+            except Exception as e:  # noqa: BLE001
+                print(f"  [aviso] Ashby falhou para '{board}': {e}", file=sys.stderr)
+
+    # Gupy por empresa: todas as vagas de empresas grandes (Americanas, Renner...)
+    # que não apareceriam só pelos search_terms
+    if sources.get("gupy", {}).get("enabled"):
+        for empresa in sources["gupy"].get("empresas", []):
+            try:
+                _add(jobs, seen, fetch_gupy_empresa(empresa, term_filter=titulo_ok, limit=company_limit))
+            except Exception as e:  # noqa: BLE001
+                print(f"  [aviso] Gupy falhou para a empresa '{empresa}': {e}", file=sys.stderr)
+
+    if sources.get("shopee", {}).get("enabled"):
+        try:
+            # filtro e limite dentro do coletor, pra não buscar descrição de vaga descartada
+            _add(jobs, seen, fetch_shopee(term_filter=titulo_ok, limit=company_limit))
+        except Exception as e:  # noqa: BLE001
+            print(f"  [aviso] Shopee falhou: {e}", file=sys.stderr)
+
+    if sources.get("tiktok", {}).get("enabled"):
+        try:
+            _add(jobs, seen, fetch_tiktok(term_filter=titulo_ok, limit=company_limit))
+        except Exception as e:  # noqa: BLE001
+            print(f"  [aviso] TikTok falhou: {e}", file=sys.stderr)
+
+    if sources.get("workday", {}).get("enabled"):
+        for site in sources["workday"].get("sites", []):
+            try:
+                _add(jobs, seen, fetch_workday(
+                    site["url"], site["empresa"], term_filter=titulo_ok, limit=company_limit
+                ))
+            except Exception as e:  # noqa: BLE001
+                print(f"  [aviso] Workday falhou para '{site.get('empresa')}': {e}", file=sys.stderr)
+
+    if sources.get("smartrecruiters", {}).get("enabled"):
+        for emp in sources["smartrecruiters"].get("empresas", []):
+            try:
+                _add(jobs, seen, fetch_smartrecruiters(
+                    emp["id"], emp.get("empresa", ""), term_filter=titulo_ok, limit=company_limit
+                ))
+            except Exception as e:  # noqa: BLE001
+                print(f"  [aviso] SmartRecruiters falhou para '{emp.get('empresa')}': {e}", file=sys.stderr)
+
+    if sources.get("teamtailor", {}).get("enabled"):
+        for site in sources["teamtailor"].get("sites", []):
+            try:
+                _add(jobs, seen, fetch_teamtailor(
+                    site["url"], site["empresa"], term_filter=titulo_ok, limit=company_limit
+                ))
+            except Exception as e:  # noqa: BLE001
+                print(f"  [aviso] Teamtailor falhou para '{site.get('empresa')}': {e}", file=sys.stderr)
+
+    # vagas remotas de empresas internacionais que aceitam Brasil/LATAM
+    if sources.get("remoteok", {}).get("enabled"):
+        try:
+            _add(jobs, seen, fetch_remoteok(
+                tags=sources["remoteok"].get("tags"), term_filter=titulo_ok, limit=company_limit
+            ))
+        except Exception as e:  # noqa: BLE001
+            print(f"  [aviso] Remote OK falhou: {e}", file=sys.stderr)
+
+    if sources.get("remoteio", {}).get("enabled"):
+        try:
+            _add(jobs, seen, fetch_remoteio(
+                locais=sources["remoteio"].get("locais"), areas=sources["remoteio"].get("areas"),
+                term_filter=titulo_ok, limit=company_limit,
+            ))
+        except Exception as e:  # noqa: BLE001
+            print(f"  [aviso] Remote.io falhou: {e}", file=sys.stderr)
+
+    # a exclusão vale também pras fontes de busca por termo (a Gupy com
+    # "e-commerce" traz vendedor, caixa, estágio...)
+    if excludes:
+        jobs = [j for j in jobs if not title_matches(j["titulo"], excludes)]
+    return jobs
+
+
+def score_job(client, cv_text: str, job: dict, questions: dict, preferencias: str = "") -> dict:
+    state = {
+        "cv": cv_text,
+        "vaga": {
+            "titulo": job["titulo"],
+            "empresa": job["empresa"],
+            "local": f"{job['cidade']} {job['estado']}".strip() or ("Remoto" if job["remoto"] else ""),
+            "remoto": job["remoto"],
+            "descricao": (job["descricao"] or "")[:MAX_DESCRICAO_CHARS],
+        },
+    }
+    if preferencias:
+        state["preferencias"] = preferencias
+    resp = client.evaluate(state, questions)
+    answers = resp["answers"]
+
+    aderencia = answers["aderencia"]
+    senioridade = answers["senioridade_compativel"]["noul"]
+    gap = answers["gap_critico"]["noul"]
+    trilha = answers["trilha"]["choice"]
+    recomendacao = answers["recomendacao"]["choice"]
+
+    n_levels = len(aderencia["legend"])
+    fit_normalizado = aderencia["score"] / max(n_levels - 1, 1)  # 0..1
+    composite = (
+        fit_normalizado * 10 * 0.55
+        + senioridade * 10 * 0.20
+        + (1 - gap) * 10 * 0.15
+        + aderencia["confidence"] * 10 * 0.10
+    )
+
+    return {
+        **job,
+        "nota_fit": round(composite, 1),
+        "aderencia_nivel": aderencia["legend"][str(int(aderencia["score"]))],
+        "confianca": aderencia["confidence"],
+        "senioridade_ok": "sim" if senioridade >= 0.5 else "não",
+        "gap_critico": "sim" if gap >= 0.5 else "não",
+        "trilha": trilha,
+        "recomendacao": recomendacao,
+    }
+
+
+# Campos gerados pelo Jev que ficam salvos no histórico — o resto (link, cidade,
+# publicado_em...) sempre vem da coleta atual.
+CACHE_SCORE_FIELDS = [
+    "nota_fit",
+    "aderencia_nivel",
+    "confianca",
+    "senioridade_ok",
+    "gap_critico",
+    "trilha",
+    "recomendacao",
+]
+
+
+def load_cache(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        # históricos salvos antes de 23/09/2026 têm chaves com acento; normaliza
+        # pro formato atual de normalize_key pra não repontuar essas vagas.
+        return {_fold(k): v for k, v in raw.items()}
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"  [aviso] histórico ilegível em {path} ({e}) — começando do zero.", file=sys.stderr)
+        return {}
+
+
+def save_cache(path: Path, cache: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+PREFERENCIAS_LOCAIS = Path("preferencias.txt")
+
+
+def carregar_preferencias(config: dict) -> str:
+    """Preferências do candidato: o arquivo local `preferencias.txt` (fora do
+    git, pra não publicar dados pessoais) tem prioridade sobre o exemplo que
+    está no config.yaml."""
+    if PREFERENCIAS_LOCAIS.exists():
+        return PREFERENCIAS_LOCAIS.read_text(encoding="utf-8").strip()
+    return (config.get("preferencias") or "").strip()
+
+
+def scoring_version(cv_text: str, preferencias: str, questions: dict) -> str:
+    """Impressão digital de tudo que influencia a nota. Muda quando o CV, as
+    preferências, as perguntas ou o limite de texto mudam — e aí as notas
+    antigas do histórico deixam de ser reaproveitadas, sem precisar de --no-cache."""
+    blob = json.dumps(
+        [cv_text, preferencias, questions, MAX_DESCRICAO_CHARS], ensure_ascii=False, sort_keys=True
+    )
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def score_jobs_with_cache(
+    client,
+    cv_text: str,
+    jobs: list[dict],
+    questions: dict,
+    cache: dict,
+    checkpoint=None,
+    preferencias: str = "",
+    versao: str | None = None,
+):
+    """Pontua só as vagas que ainda não estão no histórico; reaproveita a nota das
+    demais. O novo histórico contém apenas as vagas desta coleta, então vagas
+    encerradas saem sozinhas.
+
+    `versao` (ver scoring_version), se passada, é gravada em cada entrada; uma
+    entrada de outra versão é repontuada.
+
+    `checkpoint(cache_parcial)`, se passado, é chamado a cada 25 vagas novas com
+    o histórico antigo + o que já foi pontuado, pra uma queda no meio da rodada
+    não jogar fora o trabalho feito.
+
+    Retorna (results, novo_cache, n_reaproveitadas, n_pontuadas)."""
+    results: list[dict] = []
+    new_cache: dict = {}
+    reaproveitadas = pontuadas = 0
+    for i, job in enumerate(jobs, 1):
+        key = normalize_key(job)
+        cached = cache.get(key)
+        reusable = (
+            cached
+            and all(f in cached for f in CACHE_SCORE_FIELDS)
+            and (versao is None or cached.get("_versao") == versao)
+        )
+        if reusable:
+            r = {**job, **{f: cached[f] for f in CACHE_SCORE_FIELDS}}
+            reaproveitadas += 1
+        else:
+            try:
+                r = score_job(client, cv_text, job, questions, preferencias)
+            except JevError as e:
+                print(f"  [aviso] falha ao pontuar '{job['titulo']}' ({job['empresa']}): {e}", file=sys.stderr)
+                continue
+            pontuadas += 1
+            if pontuadas % 10 == 0:
+                print(f"  {pontuadas} novas pontuadas ({i}/{len(jobs)} vagas percorridas)", flush=True)
+        results.append(r)
+        new_cache[key] = {f: r[f] for f in CACHE_SCORE_FIELDS}
+        if versao is not None:
+            new_cache[key]["_versao"] = versao
+        if checkpoint and not reusable and pontuadas % 25 == 0:
+            checkpoint({**cache, **new_cache})
+    return results, new_cache, reaproveitadas, pontuadas
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--config", default="config.yaml")
+    ap.add_argument("--mock", action="store_true", help="usa o cliente simulado, sem rede/chave")
+    ap.add_argument(
+        "--limit",
+        type=int,
+        help="máximo de vagas por termo/fonte E por empresa (Greenhouse, InHire...), para testes rápidos",
+    )
+    ap.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="ignora o histórico e repontua todas as vagas (mudanças no CV/preferências já "
+        "fazem isso sozinhas)",
+    )
+    ap.add_argument(
+        "--collect-only",
+        action="store_true",
+        help="só coleta e salva output/vagas_coletadas.json, sem chamar o Jev",
+    )
+    args = ap.parse_args()
+
+    config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+    if args.limit:
+        config["limit_per_term"] = args.limit
+        config["limit_per_company"] = args.limit
+
+    cv_path = Path(config["cv_path"])
+    if not cv_path.exists():
+        sys.exit(
+            f"Arquivo de CV não encontrado: {cv_path}. Copie cv.exemplo.txt para {cv_path} "
+            "e cole o texto do seu currículo (o cv.txt fica fora do git)."
+        )
+    cv_text = cv_path.read_text(encoding="utf-8")
+
+    if args.mock:
+        client = MockJevClient(model=config.get("jev_model", "jev-mock"))
+        print("Rodando em modo --mock (sem chamadas reais ao Jev).")
+    else:
+        try:
+            client = JevClient(model=config.get("jev_model", "jev-latest"))
+        except JevError as e:
+            sys.exit(f"{e}")
+
+    print("Coletando vagas...")
+    jobs = collect_jobs(config)
+    print(f"  {len(jobs)} vagas únicas coletadas.")
+    por_fonte = Counter(j["fonte"] for j in jobs)
+    print("  por fonte: " + ", ".join(f"{f} {n}" for f, n in por_fonte.most_common()))
+    # fonte ligada que veio vazia quase sempre é site que mudou/bloqueou, não
+    # falta de vaga — sem este aviso, as vagas dela sumiam do relatório em silêncio
+    for fonte, cfg in config.get("sources", {}).items():
+        if cfg.get("enabled") and not por_fonte.get(fonte):
+            print(f"  [aviso] a fonte '{fonte}' está ligada mas não trouxe nenhuma vaga — "
+                  f"provavelmente o site mudou ou bloqueou o acesso (ver collectors/{fonte}.py).",
+                  file=sys.stderr)
+
+    if not jobs:
+        print("Nenhuma vaga encontrada — confira os termos de busca e as fontes no config.yaml.")
+        return
+
+    out_dir = Path(config.get("output_dir", "output"))
+    out_dir.mkdir(exist_ok=True)
+    # vagas completas (com descrição) desta coleta — usadas pelo calibrar.py
+    coletadas_path = out_dir / "vagas_coletadas.json"
+    coletadas_path.write_text(json.dumps(jobs, ensure_ascii=False), encoding="utf-8")
+    if args.collect_only:
+        print(f"Vagas salvas em {coletadas_path} (--collect-only: sem pontuação).")
+        return
+
+    # O histórico do modo --mock fica separado, pra notas simuladas nunca
+    # contaminarem as reais.
+    cache_path = out_dir / ("historico_mock.json" if args.mock else "historico.json")
+    cache = {} if args.no_cache else load_cache(cache_path)
+
+    preferencias = carregar_preferencias(config)
+    questions = build_questions(com_preferencias=bool(preferencias))
+    versao = scoring_version(cv_text, preferencias, questions)
+    print(f"Pontuando com o Jev ({len(cache)} vagas no histórico, versão {versao})...")
+    results, new_cache, reaproveitadas, pontuadas = score_jobs_with_cache(
+        client,
+        cv_text,
+        jobs,
+        questions,
+        cache,
+        checkpoint=lambda c: save_cache(cache_path, c),
+        preferencias=preferencias,
+        versao=versao,
+    )
+    save_cache(cache_path, new_cache)
+    print(f"  {pontuadas} vagas novas pontuadas, {reaproveitadas} reaproveitadas do histórico.")
+
+    min_score = config.get("min_score", 0)
+    results = [ajustar_recomendacao(r) for r in results if r["nota_fit"] >= min_score]
+    results.sort(key=lambda r: (RECOMENDACAO_ORDEM.get(r["recomendacao"], 9), -r["nota_fit"]))
+
+    out_path = out_dir / f"vagas_triadas_{dt.date.today().isoformat()}.csv"
+
+    columns = [
+        "recomendacao",
+        "nota_fit",
+        "aderencia_nivel",
+        "confianca",
+        "senioridade_ok",
+        "gap_critico",
+        "trilha",
+        "titulo",
+        "empresa",
+        "cidade",
+        "estado",
+        "remoto",
+        "salario",
+        "fonte",
+        "publicado_em",
+        "link",
+        "ajuste",
+    ]
+    with out_path.open("w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=columns)
+        writer.writeheader()
+        for r in results:
+            writer.writerow({c: r.get(c, "") for c in columns})
+
+    xlsx_path = out_path.with_suffix(".xlsx")
+    try:
+        write_xlsx(results, xlsx_path)
+    except PermissionError:
+        # acontece quando a planilha anterior do mesmo dia está aberta no Excel
+        print(f"  [aviso] não consegui salvar {xlsx_path} — feche o arquivo no Excel e rode "
+              f"`python exportar_excel.py`.", file=sys.stderr)
+
+    print(f"\nRelatório salvo em: {out_path} (e {xlsx_path.name}, com links clicáveis)")
+    print("\nTop 10:")
+    for r in results[:10]:
+        print(f"  [{r['recomendacao']:15s}] {r['nota_fit']:4.1f}  {r['titulo']} — {r['empresa']} ({r['trilha']})")
+
+
+if __name__ == "__main__":
+    main()
