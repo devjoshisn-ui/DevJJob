@@ -17,7 +17,7 @@ from collectors.lever import fetch_lever
 
 
 # ============================================================
-# DEV RADAR
+# DEV JOB RADAR V5
 # ============================================================
 
 ROOT = Path(__file__).parent
@@ -27,7 +27,7 @@ OUT.mkdir(exist_ok=True)
 STATE = OUT / "dev_seen.json"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 DevJobRadar/1.0"
+    "User-Agent": "Mozilla/5.0 (compatible; DevJobRadar/5.0)"
 }
 
 
@@ -36,7 +36,11 @@ HEADERS = {
 # ============================================================
 
 def norm(value):
-    return str(value or "").lower().strip()
+    return re.sub(
+        r"\s+",
+        " ",
+        str(value or "").lower()
+    ).strip()
 
 
 def contains(text, terms):
@@ -53,13 +57,21 @@ def full_text(job):
 
 
 def strip_html(value):
-    text = re.sub(r"<[^>]+>", " ", str(value or ""))
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    text = re.sub(
+        r"<[^>]+>",
+        " ",
+        str(value or "")
+    )
+
+    return re.sub(
+        r"\s+",
+        " ",
+        text
+    ).strip()
 
 
 # ============================================================
-# DATE HANDLING
+# DATE / FRESHNESS
 # ============================================================
 
 def parse_date(value):
@@ -79,7 +91,9 @@ def parse_date(value):
                 tzinfo=dt.timezone.utc
             )
 
-        return parsed.astimezone(dt.timezone.utc)
+        return parsed.astimezone(
+            dt.timezone.utc
+        )
 
     except Exception:
         pass
@@ -92,7 +106,9 @@ def parse_date(value):
                 tzinfo=dt.timezone.utc
             )
 
-        return parsed.astimezone(dt.timezone.utc)
+        return parsed.astimezone(
+            dt.timezone.utc
+        )
 
     except Exception:
         pass
@@ -100,7 +116,7 @@ def parse_date(value):
     try:
         parsed = dt.datetime.strptime(
             value[:10],
-            "%Y-%m-%d",
+            "%Y-%m-%d"
         )
 
         return parsed.replace(
@@ -127,7 +143,7 @@ def age_hours(job):
 
     return round(
         delta.total_seconds() / 3600,
-        1,
+        1
     )
 
 
@@ -142,24 +158,27 @@ def is_fresh(job, hours=48):
 
 
 # ============================================================
-# BROAD PUBLIC SOURCES
+# BROAD PUBLIC JOB SOURCES
 # ============================================================
 
 def fetch_remoteok():
 
-    url = "https://remoteok.com/api"
-
-    r = requests.get(
-        url,
+    response = requests.get(
+        "https://remoteok.com/api",
         headers=HEADERS,
-        timeout=30,
+        timeout=30
     )
 
-    r.raise_for_status()
+    response.raise_for_status()
 
     jobs = []
 
-    for j in r.json():
+    data = response.json()
+
+    if not isinstance(data, list):
+        return jobs
+
+    for j in data:
 
         if not isinstance(j, dict):
             continue
@@ -167,18 +186,20 @@ def fetch_remoteok():
         if not j.get("id"):
             continue
 
-        description = (
-            strip_html(j.get("description"))
-            + " "
-            + " ".join(j.get("tags") or [])
-        )
+        description = " ".join([
+            strip_html(j.get("description")),
+            " ".join(j.get("tags") or []),
+        ])
 
         jobs.append({
             "id": f"remoteok:{j.get('id')}",
             "fonte": "remoteok",
             "titulo": j.get("position", ""),
             "empresa": j.get("company", ""),
-            "cidade": j.get("location") or "Remote",
+            "cidade": (
+                j.get("location")
+                or "Remote"
+            ),
             "estado": "",
             "remoto": True,
             "link": j.get("url", ""),
@@ -191,33 +212,46 @@ def fetch_remoteok():
 
 def fetch_remotive():
 
-    url = "https://remotive.com/api/remote-jobs"
-
-    r = requests.get(
-        url,
+    response = requests.get(
+        "https://remotive.com/api/remote-jobs",
         headers=HEADERS,
-        timeout=30,
+        timeout=30
     )
 
-    r.raise_for_status()
+    response.raise_for_status()
 
     jobs = []
 
-    for j in r.json().get("jobs", []):
+    for j in response.json().get(
+        "jobs",
+        []
+    ):
 
-        description = (
-            strip_html(j.get("description"))
-            + " "
-            + str(j.get("salary") or "")
-        )
+        description = " ".join([
+            strip_html(j.get("description")),
+            f"Salary: {j.get('salary') or ''}",
+            (
+                "Candidate location: "
+                + str(
+                    j.get(
+                        "candidate_required_location"
+                    )
+                    or ""
+                )
+            ),
+        ])
 
         jobs.append({
             "id": f"remotive:{j.get('id')}",
             "fonte": "remotive",
             "titulo": j.get("title", ""),
-            "empresa": j.get("company_name", ""),
+            "empresa": (
+                j.get("company_name", "")
+            ),
             "cidade": (
-                j.get("candidate_required_location")
+                j.get(
+                    "candidate_required_location"
+                )
                 or "Remote"
             ),
             "estado": "",
@@ -234,20 +268,17 @@ def fetch_remotive():
 
 def fetch_wwr():
 
-    url = (
-        "https://weworkremotely.com/"
-        "remote-jobs.rss"
-    )
-
-    r = requests.get(
-        url,
+    response = requests.get(
+        "https://weworkremotely.com/remote-jobs.rss",
         headers=HEADERS,
-        timeout=30,
+        timeout=30
     )
 
-    r.raise_for_status()
+    response.raise_for_status()
 
-    root = ET.fromstring(r.content)
+    root = ET.fromstring(
+        response.content
+    )
 
     jobs = []
 
@@ -261,9 +292,8 @@ def fetch_wwr():
         role = raw_title
 
         if ": " in raw_title:
-            company, role = raw_title.split(
-                ": ",
-                1,
+            company, role = (
+                raw_title.split(": ", 1)
             )
 
         link = (
@@ -295,15 +325,15 @@ def fetch_wwr():
 # GEOGRAPHY
 # ============================================================
 
-INDIA = [
+INDIA_TERMS = [
     "india",
     "bengaluru",
     "bangalore",
-    "gurgaon",
     "gurugram",
+    "gurgaon",
     "mumbai",
-    "new delhi",
     "delhi",
+    "new delhi",
     "noida",
     "pune",
     "hyderabad",
@@ -320,22 +350,27 @@ INDIA = [
 ]
 
 
-UK = [
+# UK IS EXPLICITLY EXCLUDED
+
+UK_TERMS = [
     "united kingdom",
+    "great britain",
+    "england",
+    "scotland",
+    "wales",
+    "northern ireland",
     "london",
     "manchester",
     "birmingham",
     "edinburgh",
     "glasgow",
     "bristol",
-    "england",
-    "scotland",
-    "wales",
-    "northern ireland",
+    "cambridge, uk",
+    "oxford, uk",
 ]
 
 
-EUROPE = [
+EUROPE_TERMS = [
     "austria",
     "vienna",
     "belgium",
@@ -406,26 +441,26 @@ EUROPE = [
 ]
 
 
-GLOBAL_REMOTE = [
+GLOBAL_REMOTE_TERMS = [
     "worldwide",
     "world wide",
-    "anywhere in the world",
     "work from anywhere",
-    "global remote",
-    "remote globally",
+    "anywhere in the world",
     "remote worldwide",
-    "anywhere",
+    "remote globally",
+    "global remote",
+    "globally remote",
 ]
 
 
-REMOTE_BLOCKED = [
+REMOTE_RESTRICTED = [
     "us only",
     "u.s. only",
+    "usa only",
     "united states only",
-    "must be based in the us",
-    "must reside in the us",
     "remote - us",
     "remote us",
+    "north america only",
     "canada only",
     "remote canada",
     "uk only",
@@ -433,83 +468,131 @@ REMOTE_BLOCKED = [
     "europe only",
     "eu only",
     "emea only",
+    "latin america only",
+    "latam only",
+    "australia only",
 ]
 
 
-def market(job):
+def classify_market(job):
 
-    location = norm(job.get("cidade"))
-    text = full_text(job)
+    location = norm(
+        job.get("cidade")
+    )
 
-    # UK ALWAYS excluded.
-    if contains(location, UK):
+    description = norm(
+        job.get("descricao")
+    )
+
+    # --------------------------------------------------------
+    # UK hard rejection.
+    # Location is authoritative.
+    # --------------------------------------------------------
+
+    if contains(
+        location,
+        UK_TERMS
+    ):
         return ""
 
-    if contains(location, INDIA):
+    # --------------------------------------------------------
+    # India
+    # --------------------------------------------------------
+
+    if contains(
+        location,
+        INDIA_TERMS
+    ):
         return "India"
 
-    if contains(location, EUROPE):
+    # --------------------------------------------------------
+    # Continental Europe / EEA / Switzerland
+    # --------------------------------------------------------
+
+    if contains(
+        location,
+        EUROPE_TERMS
+    ):
         return "Europe"
 
-    # Some ATS put country only in description.
-    if contains(text[:5000], INDIA):
-        return "India"
+    # --------------------------------------------------------
+    # Remote
+    # --------------------------------------------------------
 
-    # Remote jobs must actually look globally accessible.
     if job.get("remoto"):
 
-        if contains(text, REMOTE_BLOCKED):
+        combined = (
+            location
+            + " "
+            + description
+        )
+
+        if contains(
+            combined,
+            REMOTE_RESTRICTED
+        ):
             return ""
 
-        if contains(text, GLOBAL_REMOTE):
-            return "Global Remote"
-
-        # Explicit India eligibility.
-        if "india" in text:
+        # Explicitly available from India.
+        if (
+            "india" in location
+            or "india" in description
+        ):
             return "India"
+
+        # Explicit global availability.
+        if contains(
+            combined,
+            GLOBAL_REMOTE_TERMS
+        ):
+            return "Global Remote"
 
     return ""
 
 
 # ============================================================
-# EUROPE VISA
+# VISA / WORK RIGHTS
 # ============================================================
 
-VISA_YES = [
+VISA_POSITIVE = [
     "visa sponsorship",
     "visa support",
-    "work visa sponsorship",
     "sponsorship available",
+    "work visa sponsorship",
     "sponsor visas",
-    "sponsor a visa",
+    "sponsor your visa",
     "immigration support",
+    "immigration assistance",
     "relocation and visa",
-    "relocation support",
+    "visa and relocation",
     "global mobility",
 ]
 
 
-VISA_NO = [
+VISA_NEGATIVE = [
     "no visa sponsorship",
+    "visa sponsorship is not available",
     "unable to sponsor",
     "cannot sponsor",
-    "no sponsorship available",
+    "will not sponsor",
+    "without sponsorship",
     "must already have the right to work",
     "must have the right to work",
     "existing right to work",
-    "without sponsorship",
+    "must be authorised to work",
+    "must be authorized to work",
 ]
 
 
-LIKELY_SPONSORS = [
-    "deel",
-    "remote",
+# Conservative list only.
+LIKELY_SPONSOR_COMPANIES = [
     "revolut",
     "wise",
+    "deel",
+    "remote",
     "datadog",
-    "cloudflare",
     "mongodb",
-    "notion",
+    "cloudflare",
     "miro",
     "typeform",
     "commercetools",
@@ -517,91 +600,112 @@ LIKELY_SPONSORS = [
 ]
 
 
-def visa_check(job, job_market):
+def check_visa(job, market):
 
-    if job_market == "India":
-        return "NOT REQUIRED", True
+    if market == "India":
+        return "Not required", True
 
-    if job_market == "Global Remote":
-        return "REMOTE FROM INDIA", True
+    if market == "Global Remote":
+        return "Remote from India", True
 
     text = full_text(job)
 
-    if contains(text, VISA_NO):
-        return "NO", False
+    if contains(
+        text,
+        VISA_NEGATIVE
+    ):
+        return "No sponsorship", False
 
-    if contains(text, VISA_YES):
-        return "SPONSORSHIP", True
+    if contains(
+        text,
+        VISA_POSITIVE
+    ):
+        return "Sponsorship indicated", True
 
-    company = norm(job.get("empresa"))
+    company = norm(
+        job.get("empresa")
+    )
 
-    if any(x in company for x in LIKELY_SPONSORS):
-        return "LIKELY", True
+    if any(
+        x in company
+        for x in LIKELY_SPONSOR_COMPANIES
+    ):
+        return "Sponsorship likely - verify", True
 
-    # User asked for sponsorship or VERY likely.
-    # Unknown Europe roles therefore do not pass.
-    return "UNKNOWN", False
+    return "Sponsorship unknown", False
 
 
 # ============================================================
-# HARD EXCLUSIONS
+# HARD ROLE GATES
 # ============================================================
 
-TECH = [
+TECH_TITLE_TERMS = [
     "software engineer",
     "software developer",
+    "frontend engineer",
+    "front-end engineer",
+    "backend engineer",
+    "back-end engineer",
+    "full stack",
+    "fullstack",
     "developer",
     "devops",
     "site reliability",
     "sre",
     "engineering manager",
-    "technical program manager",
-    "technical programme manager",
-    "technical project manager",
+    "technical program",
+    "technical programme",
+    "technical project",
     "technical product manager",
     "solutions architect",
+    "solution architect",
     "cloud engineer",
     "data engineer",
     "data scientist",
     "machine learning",
-    "security operations",
+    "ml engineer",
     "security engineer",
+    "security operations",
     "cybersecurity",
     "cyber security",
     "soc analyst",
     "it operations",
     "it support",
     "network engineer",
+    "systems administrator",
 ]
 
 
-SALES = [
-    "account executive",
-    "sales executive",
-    "sales manager",
-    "sales director",
-    "head of sales",
+SALES_BD_TITLE_TERMS = [
+    "sales",
     "business development",
-    "bd manager",
+    "account executive",
+    "account manager",
     "sales development",
-    "sales representative",
-    "enterprise sales",
-    "inside sales",
-    "field sales",
-    "regional sales",
+    "business development representative",
+    "bdr",
+    "sdr",
+    "revenue operations",
+    "sales operations",
+    "sales ops",
+    "revenue enablement",
+    "sales enablement",
+    "commercial sales",
+    "partnerships manager",
+    "partnership manager",
 ]
 
 
-ADMIN = [
+ADMIN_TITLE_TERMS = [
     "executive assistant",
     "personal assistant",
     "administrative assistant",
-    "receptionist",
     "office assistant",
+    "receptionist",
 ]
 
 
-JUNIOR = [
+JUNIOR_TITLE_TERMS = [
     "intern",
     "internship",
     "graduate trainee",
@@ -610,102 +714,243 @@ JUNIOR = [
 ]
 
 
-SPECIALIST = [
+IRRELEVANT_FUNCTIONS = [
     "accountant",
     "legal counsel",
     "lawyer",
     "payroll",
     "graphic designer",
     "product designer",
+    "recruiter",
+    "talent acquisition",
 ]
 
 
-def hard_reject(job):
+INVESTMENT_EXECUTION = [
+    "investment analyst",
+    "investment associate",
+    "private equity associate",
+    "venture capital associate",
+    "venture capital analyst",
+    "investment banking",
+    "m&a analyst",
+    "m&a associate",
+]
 
-    title = norm(job.get("titulo"))
 
-    if contains(title, TECH):
-        return "Technical"
+def conventional_product_manager(title):
 
-    if contains(title, SALES):
-        return "Sales / BD"
+    title = norm(title)
 
-    if contains(title, ADMIN):
-        return "Administrative"
+    conventional = (
+        re.search(
+            r"\bproduct manager\b",
+            title
+        )
+        or re.search(
+            r"\bproduct owner\b",
+            title
+        )
+    )
 
-    if contains(title, JUNIOR):
-        return "Too junior"
+    if not conventional:
+        return False
 
-    if contains(title, SPECIALIST):
-        return "Specialist function"
+    allowed = [
+        "product strategy",
+        "new ventures",
+        "venture",
+        "business strategy",
+    ]
 
-    return ""
+    return not contains(
+        title,
+        allowed
+    )
+
+
+def hard_role_gate(job):
+
+    title = norm(
+        job.get("titulo")
+    )
+
+    if contains(
+        title,
+        TECH_TITLE_TERMS
+    ):
+        return False, "Technical role"
+
+    # Explicit user rule:
+    # NO SALES OR BD.
+    if contains(
+        title,
+        SALES_BD_TITLE_TERMS
+    ):
+        return False, "Sales / BD role"
+
+    if contains(
+        title,
+        ADMIN_TITLE_TERMS
+    ):
+        return False, "Administrative role"
+
+    if contains(
+        title,
+        JUNIOR_TITLE_TERMS
+    ):
+        return False, "Too junior"
+
+    if contains(
+        title,
+        IRRELEVANT_FUNCTIONS
+    ):
+        return False, "Different function"
+
+    if contains(
+        title,
+        INVESTMENT_EXECUTION
+    ):
+        return False, "Investment execution"
+
+    if conventional_product_manager(
+        title
+    ):
+        return False, "Conventional Product Manager"
+
+    return True, ""
 
 
 # ============================================================
-# ADMIN-HEAVY CHIEF OF STAFF
+# SPECIAL ROLE CHECKS
 # ============================================================
 
-COS_ADMIN = [
+STRATEGIC_PROGRAM_SIGNALS = [
+    "business transformation",
+    "strategic initiatives",
+    "strategic priorities",
+    "ceo priorities",
+    "founder priorities",
+    "market expansion",
+    "business operations",
+    "operating model",
+    "commercial transformation",
+    "enterprise transformation",
+    "business strategy",
+]
+
+
+DELIVERY_PROGRAM_SIGNALS = [
+    "pmo",
+    "software delivery",
+    "engineering delivery",
+    "technical delivery",
+    "implementation project",
+    "scrum",
+    "agile delivery",
+    "jira",
+    "sprint planning",
+]
+
+
+def program_manager_allowed(job):
+
+    title = norm(
+        job.get("titulo")
+    )
+
+    if not contains(
+        title,
+        [
+            "program manager",
+            "programme manager",
+            "project manager",
+        ],
+    ):
+        return True
+
+    body = norm(
+        job.get("descricao")
+    )
+
+    strategic = contains(
+        body,
+        STRATEGIC_PROGRAM_SIGNALS
+    )
+
+    delivery = contains(
+        body,
+        DELIVERY_PROGRAM_SIGNALS
+    )
+
+    return strategic and not delivery
+
+
+COS_ADMIN_SIGNALS = [
     "calendar management",
     "manage calendar",
     "schedule meetings",
-    "travel booking",
     "travel arrangements",
+    "travel booking",
     "expense reports",
     "personal errands",
     "administrative support",
 ]
 
 
-def admin_cos(job):
+def strategic_cos_allowed(job):
 
-    title = norm(job.get("titulo"))
+    title = norm(
+        job.get("titulo")
+    )
 
     if not contains(
         title,
         [
             "chief of staff",
-            "founder",
+            "founder's office",
+            "founders office",
             "ceo office",
         ],
     ):
-        return False
+        return True
 
-    body = norm(job.get("descricao"))
-
-    hits = sum(
-        term in body
-        for term in COS_ADMIN
+    body = norm(
+        job.get("descricao")
     )
 
-    return hits >= 2
+    admin_hits = sum(
+        phrase in body
+        for phrase in COS_ADMIN_SIGNALS
+    )
+
+    return admin_hits < 2
 
 
 # ============================================================
-# DEV RESPONSIBILITY FIT
+# RESPONSIBILITY FIT
 # ============================================================
 
-FIT = {
+RESPONSIBILITY_SIGNALS = {
 
-    "Founder/CEO exposure": (
+    "Founder/CEO partnership": (
         [
             "work directly with the founder",
             "work closely with the founder",
-            "report to the founder",
             "partner with the founder",
+            "report to the founder",
             "work directly with the ceo",
+            "work closely with the ceo",
             "report directly to the ceo",
             "office of the ceo",
             "office of the founder",
             "founder's office",
             "founders office",
-            "executive leadership team",
         ],
-        12,
+        10,
     ),
 
-    "Strategy → execution": (
+    "Strategy to execution": (
         [
             "strategic initiatives",
             "strategic priorities",
@@ -715,10 +960,10 @@ FIT = {
             "execute strategic",
             "drive strategic",
             "business strategy",
-            "company strategy",
+            "corporate strategy",
             "strategic planning",
         ],
-        10,
+        8,
     ),
 
     "Cross-functional leadership": (
@@ -730,7 +975,7 @@ FIT = {
             "senior stakeholders",
             "stakeholder management",
         ],
-        7,
+        5,
     ),
 
     "P&L / commercial ownership": (
@@ -744,10 +989,10 @@ FIT = {
             "revenue growth",
             "margin improvement",
         ],
-        9,
+        5,
     ),
 
-    "Operating model / KPIs": (
+    "Operating model / governance": (
         [
             "operating model",
             "operating cadence",
@@ -761,7 +1006,7 @@ FIT = {
             "okr",
             "governance",
         ],
-        8,
+        5,
     ),
 
     "Transformation": (
@@ -776,7 +1021,7 @@ FIT = {
             "cost optimisation",
             "operating efficiency",
         ],
-        7,
+        5,
     ),
 
     "Business building": (
@@ -790,21 +1035,23 @@ FIT = {
             "launch new",
             "market expansion",
         ],
-        8,
+        5,
     ),
 
-    "GTM strategy": (
+    "International / GTM": (
         [
             "go-to-market strategy",
             "go to market strategy",
             "gtm strategy",
             "market entry",
             "international expansion",
+            "new markets",
+            "global expansion",
         ],
-        6,
+        4,
     ),
 
-    "Portfolio/value creation": (
+    "Portfolio / value creation": (
         [
             "portfolio operations",
             "portfolio companies",
@@ -814,7 +1061,7 @@ FIT = {
             "portfolio support",
             "portfolio strategy",
         ],
-        10,
+        7,
     ),
 
     "Executive special projects": (
@@ -826,102 +1073,183 @@ FIT = {
             "founder priorities",
             "mission critical initiatives",
         ],
-        8,
+        5,
     ),
 }
 
 
-TITLE_BONUS = {
-    "chief of staff": 12,
-    "founder's office": 12,
-    "founders office": 12,
-    "ceo office": 12,
-    "office of the ceo": 12,
-    "strategy and operations": 11,
-    "strategy & operations": 11,
-    "strategic initiatives": 10,
-    "business operations": 9,
-    "bizops": 9,
-    "special projects": 9,
-    "corporate strategy": 8,
-    "business transformation": 8,
-    "portfolio operations": 10,
-    "value creation": 10,
-    "venture builder": 9,
-    "venture lead": 8,
-    "business head": 9,
-    "general manager": 8,
-    "country manager": 8,
-    "product strategy": 6,
-}
+TITLE_SIGNALS = [
+    "chief of staff",
+    "founder's office",
+    "founders office",
+    "founder office",
+    "ceo office",
+    "office of the ceo",
+    "strategy and operations",
+    "strategy & operations",
+    "strategic operations",
+    "strategic initiatives",
+    "corporate strategy",
+    "business operations",
+    "bizops",
+    "special projects",
+    "business transformation",
+    "business head",
+    "general manager",
+    "country manager",
+    "portfolio operations",
+    "value creation",
+    "venture builder",
+    "venture lead",
+    "operating partner",
+    "product strategy",
+]
+
+
+def responsibility_fit(job):
+
+    text = full_text(job)
+    title = norm(
+        job.get("titulo")
+    )
+
+    points = 0
+    reasons = []
+
+    for label, (
+        terms,
+        value,
+    ) in RESPONSIBILITY_SIGNALS.items():
+
+        if contains(
+            text,
+            terms
+        ):
+
+            points += value
+            reasons.append(label)
+
+    # Title is evidence, NOT a gate.
+    if contains(
+        title,
+        TITLE_SIGNALS
+    ):
+        points += 4
+
+    return (
+        min(points, 40),
+        reasons
+    )
 
 
 # ============================================================
 # EXPERIENCE
 # ============================================================
 
-def required_years(job):
+def required_experience(job):
 
-    text = full_text(job)
+    text = norm(
+        job.get("descricao")
+    )
 
     patterns = [
-        r"(\d+)\+\s*years",
-        r"(\d+)\+\s*yrs",
-        r"at least\s+(\d+)\s+years",
-        r"minimum\s+(?:of\s+)?(\d+)\s+years",
+        r"(\d{1,2})\+\s*years(?:\s+of)?\s+experience",
+        r"minimum(?:\s+of)?\s+(\d{1,2})\s+years(?:\s+of)?\s+experience",
+        r"at least\s+(\d{1,2})\s+years(?:\s+of)?\s+experience",
+        r"(\d{1,2})\s*-\s*(\d{1,2})\s+years(?:\s+of)?\s+experience",
+        r"(\d{1,2})\s+to\s+(\d{1,2})\s+years(?:\s+of)?\s+experience",
     ]
 
-    values = []
+    requirements = []
 
     for pattern in patterns:
 
-        for value in re.findall(pattern, text):
-
-            try:
-                values.append(int(value))
-            except Exception:
-                pass
-
-    return min(values) if values else None
-
-
-# ============================================================
-# INDIA COMPENSATION
-# ============================================================
-
-def india_salary(job):
-
-    text = full_text(job)
-
-    patterns = [
-        r"₹\s*(\d+(?:\.\d+)?)\s*(?:lpa|lakh|lakhs)",
-        r"inr\s*(\d+(?:\.\d+)?)\s*(?:lpa|lakh|lakhs)",
-        r"(\d+(?:\.\d+)?)\s*lpa",
-    ]
-
-    values = []
-
-    for pattern in patterns:
-
-        for x in re.findall(
+        for match in re.findall(
             pattern,
-            text,
-            flags=re.I,
+            text
         ):
 
-            try:
-                value = float(x)
+            if isinstance(
+                match,
+                tuple
+            ):
 
-                if 10 <= value <= 300:
-                    values.append(value)
+                nums = [
+                    int(x)
+                    for x in match
+                    if x
+                ]
 
-            except Exception:
-                pass
+                if nums:
+                    requirements.append(
+                        min(nums)
+                    )
 
-    return max(values) if values else None
+            else:
+
+                try:
+                    requirements.append(
+                        int(match)
+                    )
+                except Exception:
+                    pass
+
+    if not requirements:
+        return None
+
+    # Overall JDs may mention multiple experience
+    # requirements. Highest credible minimum is safer.
+    credible = [
+        x
+        for x in requirements
+        if 1 <= x <= 20
+    ]
+
+    return (
+        max(credible)
+        if credible
+        else None
+    )
 
 
-EQUITY = [
+def experience_score(job, responsibility):
+
+    years = required_experience(job)
+
+    if years is None:
+        return 8, "Experience requirement unclear", True
+
+    if years <= 5:
+        return 11, f"{years}+ years requested", True
+
+    if years <= 7:
+        return 15, f"{years}+ years - strong match", True
+
+    if years == 8:
+        return 13, "8+ years - viable", True
+
+    if years <= 10:
+        return 9, f"{years}+ years - stretch", True
+
+    if years == 11:
+
+        if responsibility >= 30:
+            return 4, "11+ years - exceptional stretch", True
+
+        return 0, "11+ years - too senior", False
+
+    return (
+        0,
+        f"{years}+ years - reject",
+        False
+    )
+
+
+# ============================================================
+# COMPENSATION
+# ============================================================
+
+EQUITY_TERMS = [
     "equity",
     "esop",
     "esops",
@@ -930,206 +1258,311 @@ EQUITY = [
 ]
 
 
-def compensation(job, job_market):
-
-    if job_market != "India":
-        return "UNKNOWN", True
-
-    salary = india_salary(job)
-
-    if salary is None:
-        return "UNKNOWN", True
-
-    if salary >= 40:
-        return f"₹{salary:g}L+ indicated", True
-
-    if salary >= 35 and contains(
-        full_text(job),
-        EQUITY,
-    ):
-        return f"₹{salary:g}L + equity", True
-
-    return f"₹{salary:g}L indicated", False
-
-
-# ============================================================
-# SCORE
-# ============================================================
-
-def score(job, job_market, visa):
+def india_salary_lpa(job):
 
     text = full_text(job)
-    title = norm(job.get("titulo"))
 
-    total = 0
-    reasons = []
-    concerns = []
+    values = []
 
-    responsibility = 0
+    patterns = [
+        r"₹\s*(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*₹?\s*(\d+(?:\.\d+)?)\s*(?:lpa|lakh|lakhs)",
+        r"inr\s*(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)\s*(?:lpa|lakh|lakhs)",
+        r"(\d+(?:\.\d+)?)\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)\s*lpa",
+        r"₹\s*(\d+(?:\.\d+)?)\s*(?:lpa|lakh|lakhs)",
+        r"inr\s*(\d+(?:\.\d+)?)\s*(?:lpa|lakh|lakhs)",
+        r"(\d+(?:\.\d+)?)\s*lpa",
+    ]
 
-    for label, (terms, points) in FIT.items():
+    for pattern in patterns:
 
-        if contains(text, terms):
+        for match in re.findall(
+            pattern,
+            text,
+            flags=re.I
+        ):
 
-            responsibility += points
-            reasons.append(label)
+            if isinstance(
+                match,
+                tuple
+            ):
 
-    responsibility = min(
-        responsibility,
-        40,
-    )
+                for value in match:
 
-    # Actual work matters most.
-    if responsibility < 14:
-        return 0, reasons, [
-            "Insufficient responsibility fit"
-        ]
+                    if not value:
+                        continue
 
-    total += responsibility
+                    try:
+                        n = float(value)
 
-    # Title is only a bonus.
-    title_points = 0
+                        if 10 <= n <= 300:
+                            values.append(n)
 
-    for phrase, points in TITLE_BONUS.items():
+                    except Exception:
+                        pass
 
-        if phrase in title:
-            title_points = max(
-                title_points,
-                points,
-            )
+            else:
 
-    total += title_points
+                try:
+                    n = float(match)
 
-    # Experience.
-    years = required_years(job)
+                    if 10 <= n <= 300:
+                        values.append(n)
 
-    if years is None:
-        total += 8
+                except Exception:
+                    pass
 
-    elif years <= 7:
-        total += 15
+    return max(values) if values else None
 
-    elif years <= 8:
-        total += 13
 
-    elif years <= 10:
-        total += 9
-        concerns.append(
-            f"JD asks {years}+ years"
+def compensation_check(
+    job,
+    market
+):
+
+    if market != "India":
+        return (
+            "Salary unknown / verify",
+            True,
+            5
         )
 
-    elif years <= 11:
+    salary = india_salary_lpa(job)
 
-        if responsibility >= 28:
-            total += 3
-            concerns.append(
-                f"Stretch: {years}+ years"
-            )
-        else:
-            return 0, reasons, [
-                f"Too senior: {years}+ years"
-            ]
+    if salary is None:
+        return (
+            "Salary unknown",
+            True,
+            5
+        )
 
-    else:
-        return 0, reasons, [
-            f"Normally exclude: {years}+ years"
-        ]
+    if salary >= 40:
+        return (
+            f"₹{salary:g}L+ indicated",
+            True,
+            10
+        )
 
-    # Founder/executive exposure.
-    if contains(
+    if (
+        35 <= salary < 40
+        and contains(
+            full_text(job),
+            EQUITY_TERMS
+        )
+    ):
+        return (
+            f"₹{salary:g}L + equity indicated",
+            True,
+            8
+        )
+
+    return (
+        f"₹{salary:g}L indicated",
+        False,
+        0
+    )
+
+
+# ============================================================
+# PROFILE SCORE
+#
+# Responsibilities             40
+# Seniority / experience       15
+# Founder / executive exposure 10
+# Compensation                 10
+# Location / visa              10
+# Company / upside             10
+# Freshness                     5
+# ============================================================
+
+def calculate_score(
+    job,
+    market,
+    visa
+):
+
+    concerns = []
+
+    responsibility, reasons = (
+        responsibility_fit(job)
+    )
+
+    # Need meaningful evidence of actual
+    # work alignment.
+    if responsibility < 12:
+
+        return (
+            0,
+            reasons,
+            ["Insufficient responsibility fit"],
+            False
+        )
+
+    total = responsibility
+
+    # --------------------------------------------------------
+    # Experience - 15
+    # --------------------------------------------------------
+
+    exp_points, exp_note, exp_ok = (
+        experience_score(
+            job,
+            responsibility
+        )
+    )
+
+    if not exp_ok:
+
+        return (
+            0,
+            reasons,
+            [exp_note],
+            False
+        )
+
+    total += exp_points
+
+    if "strong match" not in exp_note:
+        concerns.append(exp_note)
+
+    # --------------------------------------------------------
+    # Founder/executive exposure - 10
+    # --------------------------------------------------------
+
+    text = full_text(job)
+
+    executive = contains(
         text,
         [
             "founder",
             "ceo",
             "chief executive",
             "executive leadership",
+            "leadership team",
+            "c-suite",
         ],
-    ):
+    )
+
+    if executive:
         total += 10
 
-    # Geography/work rights.
-    if job_market == "India":
+    # --------------------------------------------------------
+    # Compensation - 10
+    # --------------------------------------------------------
+
+    salary, comp_ok, comp_points = (
+        compensation_check(
+            job,
+            market
+        )
+    )
+
+    if not comp_ok:
+
+        return (
+            0,
+            reasons,
+            [salary],
+            False
+        )
+
+    total += comp_points
+
+    if "unknown" in salary.lower():
+        concerns.append(
+            "Compensation needs verification"
+        )
+
+    # --------------------------------------------------------
+    # Geography / visa - 10
+    # --------------------------------------------------------
+
+    if market == "India":
         total += 10
 
-    elif job_market == "Europe":
+    elif market == "Global Remote":
+        total += 10
 
-        if visa == "SPONSORSHIP":
+    elif market == "Europe":
+
+        if visa == "Sponsorship indicated":
             total += 10
+
         else:
             total += 7
 
-    elif job_market == "Global Remote":
-        total += 9
+    # --------------------------------------------------------
+    # Company/upside - 10
+    #
+    # Evidence-based rather than brand-name based.
+    # --------------------------------------------------------
 
-    # Compensation.
-    salary, ok = compensation(
-        job,
-        job_market,
+    upside = 0
+
+    if contains(
+        text,
+        [
+            "high growth",
+            "high-growth",
+            "scale-up",
+            "scaleup",
+            "series a",
+            "series b",
+            "series c",
+            "series d",
+            "venture backed",
+            "venture-backed",
+            "private equity backed",
+            "pe-backed",
+            "global expansion",
+            "rapid growth",
+        ],
+    ):
+        upside += 5
+
+    if contains(
+        text,
+        [
+            "build from scratch",
+            "0 to 1",
+            "zero to one",
+            "new market",
+            "new venture",
+            "business building",
+            "transformation",
+        ],
+    ):
+        upside += 5
+
+    total += min(
+        upside,
+        10
     )
 
-    if not ok:
-        return 0, reasons, [salary]
+    # --------------------------------------------------------
+    # Freshness - 5
+    # --------------------------------------------------------
 
-    if salary == "UNKNOWN":
-        total += 5
-        concerns.append(
-            "Compensation not published"
-        )
-    else:
-        total += 10
-
-    # Freshness.
     age = age_hours(job)
 
     if age is not None:
 
         if age <= 12:
             total += 5
+
         elif age <= 24:
             total += 4
+
         elif age <= 36:
             total += 3
+
         else:
             total += 2
 
-    # Penalise disguised technical work.
-    if contains(
-        norm(job.get("descricao")),
-        [
-            "software development lifecycle",
-            "site reliability engineering",
-            "technical architecture",
-            "cloud infrastructure",
-            "security operations center",
-            "security operations centre",
-        ],
-    ):
-        total -= 30
-        concerns.append(
-            "Technical delivery content"
-        )
-
-    # Penalise disguised quota sales.
-    if contains(
-        norm(job.get("descricao")),
-        [
-            "sales quota",
-            "quota-carrying",
-            "quota carrying",
-            "cold calling",
-            "prospecting",
-            "close deals",
-        ],
-    ):
-        total -= 35
-        concerns.append(
-            "Sales/quota content"
-        )
-
     return (
-        max(0, min(round(total), 100)),
+        min(round(total), 100),
         reasons[:5],
         concerns[:4],
+        True
     )
 
 
@@ -1137,18 +1570,18 @@ def score(job, job_market, visa):
 # ACTION
 # ============================================================
 
-def action(score_value):
+def action(score):
 
-    if score_value >= 85:
+    if score >= 85:
         return "APPLY TODAY"
 
-    if score_value >= 75:
+    if score >= 72:
         return "STRONG - REVIEW TODAY"
 
-    if score_value >= 65:
+    if score >= 60:
         return "REVIEW"
 
-    return "IGNORE"
+    return "DO NOT SURFACE"
 
 
 # ============================================================
@@ -1160,21 +1593,23 @@ def collect(cfg):
     jobs = []
 
     # --------------------------------------------------------
-    # Direct company ATS boards
+    # DIRECT ATS SOURCES
     # --------------------------------------------------------
 
-    collectors = [
+    direct_collectors = [
         ("ashby", fetch_ashby),
         ("greenhouse", fetch_greenhouse),
         ("lever", fetch_lever),
     ]
 
-    for source, fn in collectors:
+    for source, fn in direct_collectors:
 
-        for company in (
+        companies = (
             cfg.get("sources", {})
             .get(source, [])
-        ):
+        )
+
+        for company in companies:
 
             try:
 
@@ -1185,7 +1620,7 @@ def collect(cfg):
                 print(
                     f"[{source}] "
                     f"{company}: "
-                    f"{len(found)}"
+                    f"{len(found)} jobs"
                 )
 
             except Exception as exc:
@@ -1197,16 +1632,25 @@ def collect(cfg):
                 )
 
     # --------------------------------------------------------
-    # Broad market feeds
+    # MARKET-WIDE PUBLIC FEEDS
     # --------------------------------------------------------
 
-    broad_sources = [
-        ("remoteok", fetch_remoteok),
-        ("remotive", fetch_remotive),
-        ("weworkremotely", fetch_wwr),
+    broad = [
+        (
+            "remoteok",
+            fetch_remoteok
+        ),
+        (
+            "remotive",
+            fetch_remotive
+        ),
+        (
+            "weworkremotely",
+            fetch_wwr
+        ),
     ]
 
-    for name, fn in broad_sources:
+    for source, fn in broad:
 
         try:
 
@@ -1215,19 +1659,54 @@ def collect(cfg):
             jobs.extend(found)
 
             print(
-                f"[{name}] "
-                f"{len(found)}"
+                f"[{source}] "
+                f"{len(found)} jobs"
             )
 
         except Exception as exc:
 
             print(
                 f"[WARNING] "
-                f"{name}: "
+                f"{source}: "
                 f"{exc}"
             )
 
     return jobs
+
+
+# ============================================================
+# DEDUPLICATION
+# ============================================================
+
+def dedupe_key(job):
+
+    company = re.sub(
+        r"[^a-z0-9]",
+        "",
+        norm(job.get("empresa"))
+    )
+
+    role = re.sub(
+        r"[^a-z0-9]",
+        "",
+        norm(job.get("titulo"))
+    )
+
+    location = re.sub(
+        r"[^a-z0-9]",
+        "",
+        norm(job.get("cidade"))
+    )
+
+    if company and role:
+        return (
+            f"{company}|{role}|{location}"
+        )
+
+    return (
+        job.get("id")
+        or job.get("link")
+    )
 
 
 # ============================================================
@@ -1238,13 +1717,14 @@ def main():
 
     cfg = yaml.safe_load(
         (
-            ROOT / "dev_config.yaml"
+            ROOT
+            / "dev_config.yaml"
         ).read_text(
             encoding="utf-8"
         )
     )
 
-    freshness = (
+    freshness_hours = (
         cfg.get("candidate", {})
         .get("freshness_hours", 48)
     )
@@ -1255,7 +1735,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Memory
+    # Seen memory
     # --------------------------------------------------------
 
     if STATE.exists():
@@ -1280,150 +1760,212 @@ def main():
     # Collect
     # --------------------------------------------------------
 
-    raw = collect(cfg)
-
-    # --------------------------------------------------------
-    # Deduplicate
-    # --------------------------------------------------------
+    raw_jobs = collect(cfg)
 
     unique = {}
 
-    for job in raw:
+    for job in raw_jobs:
 
-        jid = (
-            job.get("id")
-            or job.get("link")
-        )
+        key = dedupe_key(job)
 
-        if jid:
-            unique[str(jid)] = job
+        if key:
+            unique[key] = job
 
-    counters = {
+    # --------------------------------------------------------
+    # Funnel diagnostics
+    # --------------------------------------------------------
+
+    funnel = {
         "fresh": 0,
         "geography": 0,
         "visa": 0,
-        "role": 0,
-        "fit65": 0,
-        "fit75": 0,
-        "fit85": 0,
+        "role_gate": 0,
+        "special_gate": 0,
+        "responsibility": 0,
+        "experience_comp": 0,
+        "qualified": 0,
+        "strong": 0,
     }
 
     candidates = []
 
-    # --------------------------------------------------------
-    # Eligibility funnel
-    # --------------------------------------------------------
+    for key, job in unique.items():
 
-    for jid, job in unique.items():
+        # ----------------------------------------------------
+        # 1. <= 48 hours
+        # ----------------------------------------------------
 
-        # STRICT <=48h
         if not is_fresh(
             job,
-            freshness,
+            freshness_hours
         ):
             continue
 
-        counters["fresh"] += 1
+        funnel["fresh"] += 1
 
-        # INDIA / EU-EEA-SWISS / TRUE GLOBAL REMOTE
-        job_market = market(job)
+        # ----------------------------------------------------
+        # 2. Geography
+        # ----------------------------------------------------
+
+        job_market = classify_market(
+            job
+        )
 
         if not job_market:
             continue
 
-        counters["geography"] += 1
+        funnel["geography"] += 1
 
-        # VISA
-        visa, visa_ok = visa_check(
+        # ----------------------------------------------------
+        # 3. Visa/work rights
+        # ----------------------------------------------------
+
+        visa, visa_ok = check_visa(
             job,
-            job_market,
+            job_market
         )
 
         if not visa_ok:
             continue
 
-        counters["visa"] += 1
+        funnel["visa"] += 1
 
-        # HARD ROLE EXCLUSIONS
-        rejection = hard_reject(job)
+        # ----------------------------------------------------
+        # 4. Hard role categories
+        # ----------------------------------------------------
 
-        if rejection:
-            continue
-
-        # ADMIN-HEAVY COS
-        if admin_cos(job):
-            continue
-
-        counters["role"] += 1
-
-        # SCORE
-        fit, reasons, concerns = score(
-            job,
-            job_market,
-            visa,
+        role_ok, rejection = (
+            hard_role_gate(job)
         )
 
-        if fit < 65:
+        if not role_ok:
             continue
 
-        counters["fit65"] += 1
+        funnel["role_gate"] += 1
 
-        if fit >= 75:
-            counters["fit75"] += 1
+        # ----------------------------------------------------
+        # 5. Special role logic
+        # ----------------------------------------------------
 
-        if fit >= 85:
-            counters["fit85"] += 1
+        if not program_manager_allowed(
+            job
+        ):
+            continue
 
-        # DEDUPE BETWEEN DAYS
+        if not strategic_cos_allowed(
+            job
+        ):
+            continue
+
+        funnel["special_gate"] += 1
+
+        # ----------------------------------------------------
+        # 6. Responsibility fit
+        # ----------------------------------------------------
+
+        responsibility, _ = (
+            responsibility_fit(job)
+        )
+
+        if responsibility < 12:
+            continue
+
+        funnel["responsibility"] += 1
+
+        # ----------------------------------------------------
+        # 7. Score
+        # ----------------------------------------------------
+
+        (
+            score,
+            reasons,
+            concerns,
+            eligible,
+        ) = calculate_score(
+            job,
+            job_market,
+            visa
+        )
+
+        if not eligible:
+            continue
+
+        funnel["experience_comp"] += 1
+
+        # 60 = minimum qualified.
+        if score < 60:
+            continue
+
+        funnel["qualified"] += 1
+
+        if score >= 72:
+            funnel["strong"] += 1
+
+        # ----------------------------------------------------
+        # 8. Seen state
+        # ----------------------------------------------------
+
+        jid = (
+            job.get("id")
+            or job.get("link")
+            or key
+        )
+
         if jid in seen:
             continue
 
-        salary, _ = compensation(
-            job,
-            job_market,
+        salary, _, _ = (
+            compensation_check(
+                job,
+                job_market
+            )
         )
 
         candidates.append({
-            "score": fit,
-            "posted": job.get(
-                "publicado_em",
-                "",
+            "Score": score,
+            "Posted": (
+                job.get(
+                    "publicado_em",
+                    ""
+                )
             ),
-            "age_hours": age_hours(job),
-            "company": job.get(
-                "empresa",
-                "",
+            "Company": (
+                job.get(
+                    "empresa",
+                    ""
+                )
             ),
-            "role": job.get(
-                "titulo",
-                "",
+            "Role": (
+                job.get(
+                    "titulo",
+                    ""
+                )
             ),
-            "location": job.get(
-                "cidade",
-                "",
+            "Location": (
+                job.get(
+                    "cidade",
+                    ""
+                )
             ),
-            "market": job_market,
-            "salary": salary,
-            "visa": visa,
-            "why_you_fit": "; ".join(
-                reasons
+            "Salary": salary,
+            "Visa": visa,
+            "Why You Fit": (
+                "; ".join(reasons)
             ),
-            "concern": (
+            "Concern": (
                 "; ".join(concerns)
                 if concerns
                 else "None identified"
             ),
-            "action": action(fit),
-            "source": job.get(
-                "fonte",
-                "",
+            "Action": action(score),
+            "Link": (
+                job.get(
+                    "link",
+                    ""
+                )
             ),
-            "job_link": job.get(
-                "link",
-                "",
-            ),
-            "status": "NEW",
-            "id": jid,
+            "_id": jid,
+            "_age": age_hours(job),
         })
 
     # --------------------------------------------------------
@@ -1431,24 +1973,26 @@ def main():
     # --------------------------------------------------------
 
     candidates.sort(
-        key=lambda x: (
-            x["score"],
-            -(x["age_hours"] or 999),
+        key=lambda row: (
+            row["Score"],
+            -(row["_age"] or 999),
         ),
-        reverse=True,
+        reverse=True
     )
 
-    # If >=20 strong jobs exist, show ALL strong jobs.
+    # 20 is target, not quota.
+    #
+    # If >20 strong roles genuinely exist,
+    # show all strong roles.
     strong = [
-        x
-        for x in candidates
-        if x["score"] >= 75
+        row
+        for row in candidates
+        if row["Score"] >= 72
     ]
 
     if len(strong) >= target:
         selected = strong
     else:
-        # Never manufacture weak jobs just to reach 20.
         selected = candidates[:target]
 
     # --------------------------------------------------------
@@ -1463,141 +2007,166 @@ def main():
         .isoformat()
     )
 
-    path = (
+    output_path = (
         OUT
         / f"dev_radar_{today}.csv"
     )
 
     fields = [
-        "score",
-        "posted",
-        "age_hours",
-        "company",
-        "role",
-        "location",
-        "market",
-        "salary",
-        "visa",
-        "why_you_fit",
-        "concern",
-        "action",
-        "source",
-        "job_link",
-        "status",
-        "id",
+        "Score",
+        "Posted",
+        "Company",
+        "Role",
+        "Location",
+        "Salary",
+        "Visa",
+        "Why You Fit",
+        "Concern",
+        "Action",
+        "Link",
     ]
 
-    with path.open(
+    with output_path.open(
         "w",
         newline="",
-        encoding="utf-8",
-    ) as f:
+        encoding="utf-8"
+    ) as handle:
 
         writer = csv.DictWriter(
-            f,
+            handle,
             fieldnames=fields,
+            extrasaction="ignore"
         )
 
         writer.writeheader()
-        writer.writerows(selected)
 
-    # Remember only jobs actually surfaced.
+        writer.writerows(
+            selected
+        )
+
+    # --------------------------------------------------------
+    # Seen memory
+    # --------------------------------------------------------
+
     seen.update(
-        row["id"]
+        row["_id"]
         for row in selected
     )
 
     STATE.write_text(
         json.dumps(
             sorted(seen),
-            indent=2,
+            indent=2
         ),
-        encoding="utf-8",
+        encoding="utf-8"
     )
 
     # --------------------------------------------------------
-    # REPORT
+    # Diagnostics
     # --------------------------------------------------------
 
     print()
     print(
-        "============== DEV RADAR =============="
+        "============== DEV RADAR V5 =============="
     )
 
     print(
-        f"Raw jobs collected:       {len(raw)}"
+        f"Raw jobs collected:         {len(raw_jobs)}"
     )
 
     print(
-        f"Unique jobs:              {len(unique)}"
+        f"Unique jobs:                {len(unique)}"
     )
 
     print(
-        f"Fresh <=48h:              {counters['fresh']}"
+        f"Fresh <=48h:                {funnel['fresh']}"
     )
 
     print(
-        f"Eligible geography:       {counters['geography']}"
+        f"Eligible geography:         {funnel['geography']}"
     )
 
     print(
-        f"Visa/work rights passed:  {counters['visa']}"
+        f"Visa/work rights passed:    {funnel['visa']}"
     )
 
     print(
-        f"Role exclusions passed:   {counters['role']}"
+        f"Role category passed:       {funnel['role_gate']}"
     )
 
     print(
-        f"Fit >=65:                 {counters['fit65']}"
+        f"Special role checks passed: {funnel['special_gate']}"
     )
 
     print(
-        f"Strong >=75:              {counters['fit75']}"
+        f"Responsibility fit passed:  {funnel['responsibility']}"
     )
 
     print(
-        f"Exceptional >=85:         {counters['fit85']}"
+        f"Experience/comp passed:     {funnel['experience_comp']}"
     )
 
     print(
-        f"NEW jobs surfaced:        {len(selected)}"
+        f"Qualified >=60:             {funnel['qualified']}"
     )
 
     print(
-        f"Output:                   {path}"
+        f"Strong >=72:                {funnel['strong']}"
     )
 
     print(
-        "======================================="
+        f"NEW jobs surfaced:          {len(selected)}"
     )
 
-    for row in selected:
+    print(
+        f"Output:                     {output_path}"
+    )
+
+    print(
+        "=========================================="
+    )
+
+    if selected:
 
         print()
+        print("TOP RESULTS")
 
-        print(
-            f'{row["score"]}/100 | '
-            f'{row["action"]}'
-        )
+        for row in selected:
 
-        print(
-            f'{row["company"]} | '
-            f'{row["role"]}'
-        )
+            print()
 
-        print(
-            f'{row["location"]} | '
-            f'{row["market"]} | '
-            f'Visa: {row["visa"]}'
-        )
+            print(
+                f'{row["Score"]}/100 | '
+                f'{row["Action"]}'
+            )
 
-        print(
-            f'Why: {row["why_you_fit"]}'
-        )
+            print(
+                f'{row["Company"]} | '
+                f'{row["Role"]}'
+            )
 
+            print(
+                f'{row["Location"]}'
+            )
+
+            print(
+                f'Visa: {row["Visa"]}'
+            )
+
+            print(
+                f'Why: {row["Why You Fit"]}'
+            )
+
+            print(
+                f'Concern: {row["Concern"]}'
+            )
+
+    else:
+
+        print()
         print(
-            f'Concern: {row["concern"]}'
+            "No genuinely qualified NEW jobs "
+            "were found in this run."
         )
 
 
