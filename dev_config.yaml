@@ -1,0 +1,48 @@
+candidate:
+  name: "Dev Joshi"
+  freshness_hours: 48
+  daily_target: 20
+  india_base_floor_lpa: 40
+  india_equity_exception_lpa: 35
+  europe_requires_sponsorship: true
+  minimum_monthly_savings_inr: 130000
+
+role_keywords:
+  - chief of staff
+  - founder
+  - ceo office
+  - strategy
+  - strategic initiatives
+  - business operations
+  - bizops
+  - operations
+  - special projects
+  - transformation
+  - program manager
+  - portfolio operations
+  - value creation
+  - venture builder
+  - business head
+  - general manager
+  - country manager
+  - commercial strategy
+  - operating partner
+
+exclude_title_keywords:
+  - intern
+  - internship
+  - graduate
+  - junior analyst
+  - executive assistant
+  - personal assistant
+  - receptionist
+  - software engineer
+  - developer
+  - data scientist
+  - accountant
+  - legal counsel
+
+sources:
+  ashby: [razorpay, cred, deel, remote, notion, ramp, rippling]
+  greenhouse: [meesho, phonepe, browserstack, chargebee, freshworks, deliveroo, wise, revolut, datadog, cloudflare, mongodb, zapier]
+  lever: [slice, urbancompany, groww, cred, sprinto, wingify, commercetools, miro, typeform]
