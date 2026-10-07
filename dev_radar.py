@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-"""
-Dev Radar V2
-Fresh job discovery + relevance scoring for Dev Joshi.
-
-Rules:
-- Jobs must be <= 48 hours old
-- India priority
-- Europe accepted
-- Global remote accepted where plausible
-- Business/founder/strategy/operations roles prioritised
-- Technical, engineering, security, IT and specialist roles rejected
-- Previously surfaced jobs deduplicated
-"""
 
 import csv
 import datetime as dt
@@ -32,9 +19,9 @@ OUT.mkdir(exist_ok=True)
 STATE = OUT / "dev_seen.json"
 
 
-# ---------------------------------------------------------
+# =========================================================
 # DATE / FRESHNESS
-# ---------------------------------------------------------
+# =========================================================
 
 def parse_date(value):
     if not value:
@@ -49,12 +36,11 @@ def parse_date(value):
 
         return parsed.astimezone(dt.timezone.utc)
 
-    except ValueError:
+    except (ValueError, TypeError, AttributeError):
         try:
-            return dt.datetime.fromisoformat(
-                value[:10]
-            ).replace(tzinfo=dt.timezone.utc)
-        except ValueError:
+            parsed = dt.datetime.fromisoformat(str(value)[:10])
+            return parsed.replace(tzinfo=dt.timezone.utc)
+        except (ValueError, TypeError):
             return None
 
 
@@ -68,14 +54,14 @@ def age_hours(job):
     return round(delta.total_seconds() / 3600, 1)
 
 
-def is_fresh(job, hours):
+def is_fresh(job, hours=48):
     age = age_hours(job)
     return age is not None and 0 <= age <= hours
 
 
-# ---------------------------------------------------------
+# =========================================================
 # GEOGRAPHY
-# ---------------------------------------------------------
+# =========================================================
 
 INDIA_TERMS = [
     "india",
@@ -104,6 +90,10 @@ INDIA_TERMS = [
 EUROPE_TERMS = [
     "europe",
     "emea",
+    "united kingdom",
+    "uk",
+    "london",
+    "manchester",
     "germany",
     "berlin",
     "munich",
@@ -146,11 +136,22 @@ EUROPE_TERMS = [
 ]
 
 
+GLOBAL_REMOTE_TERMS = [
+    "worldwide",
+    "work from anywhere",
+    "remote globally",
+    "global remote",
+    "anywhere in the world",
+    "remote - worldwide",
+    "remote worldwide",
+]
+
+
 def relevant_market(job):
     location = (job.get("cidade") or "").lower()
     description = (job.get("descricao") or "").lower()
 
-    text = location + " " + description[:3000]
+    text = f"{location} {description[:4000]}"
 
     if any(term in text for term in INDIA_TERMS):
         return "India"
@@ -158,27 +159,17 @@ def relevant_market(job):
     if any(term in text for term in EUROPE_TERMS):
         return "Europe"
 
-    if any(
-        term in text
-        for term in [
-            "worldwide",
-            "work from anywhere",
-            "remote globally",
-            "global remote",
-            "anywhere in the world",
-        ]
-    ):
+    if any(term in text for term in GLOBAL_REMOTE_TERMS):
         return "Global Remote"
 
     return ""
 
 
-# ---------------------------------------------------------
+# =========================================================
 # HARD REJECTIONS
-# ---------------------------------------------------------
+# =========================================================
 
 HARD_REJECT_TITLE = [
-    # Engineering / technical
     "software engineer",
     "software developer",
     "developer",
@@ -187,6 +178,7 @@ HARD_REJECT_TITLE = [
     "sre",
     "engineering manager",
     "technical program manager",
+    "technical programme manager",
     "technical project manager",
     "technical product manager",
     "solutions architect",
@@ -195,7 +187,6 @@ HARD_REJECT_TITLE = [
     "data scientist",
     "machine learning engineer",
 
-    # Security / IT
     "security operations",
     "security engineer",
     "cyber security",
@@ -206,25 +197,20 @@ HARD_REJECT_TITLE = [
     "systems administrator",
     "network engineer",
 
-    # Specialist functions
     "accountant",
     "legal counsel",
     "lawyer",
     "tax manager",
     "payroll",
-    "recruiter",
-    "talent acquisition",
     "graphic designer",
     "product designer",
 
-    # Junior
     "intern",
     "internship",
     "graduate trainee",
     "junior analyst",
     "management trainee",
 
-    # EA / admin
     "executive assistant",
     "personal assistant",
     "administrative assistant",
@@ -233,9 +219,9 @@ HARD_REJECT_TITLE = [
 ]
 
 
-# ---------------------------------------------------------
-# POSITIVE ROLE SIGNALS
-# ---------------------------------------------------------
+# =========================================================
+# TITLE SIGNALS
+# =========================================================
 
 TITLE_SIGNALS = {
     "chief of staff": 35,
@@ -245,6 +231,7 @@ TITLE_SIGNALS = {
     "ceo office": 32,
     "office of the ceo": 32,
     "promoter office": 32,
+    "chairman office": 30,
 
     "strategy and operations": 32,
     "strategy & operations": 32,
@@ -252,6 +239,8 @@ TITLE_SIGNALS = {
 
     "strategic initiatives": 28,
     "special projects": 27,
+    "strategic projects": 25,
+
     "business operations": 27,
     "bizops": 27,
 
@@ -261,13 +250,17 @@ TITLE_SIGNALS = {
 
     "commercial strategy": 24,
     "corporate strategy": 25,
+    "growth strategy": 22,
 
     "business head": 25,
     "general manager": 20,
     "country manager": 20,
+    "market lead": 18,
+    "business lead": 18,
 
     "portfolio operations": 28,
     "portfolio strategy": 25,
+    "portfolio acceleration": 25,
     "value creation": 28,
 
     "venture builder": 27,
@@ -275,17 +268,22 @@ TITLE_SIGNALS = {
     "venture development": 22,
 
     "operating partner": 25,
+
     "operations lead": 18,
     "operations manager": 14,
 
     "program manager": 10,
     "programme manager": 10,
+
+    "commercial operations": 18,
+    "growth operations": 16,
+    "revenue strategy": 18,
 }
 
 
-# ---------------------------------------------------------
+# =========================================================
 # DESCRIPTION SIGNALS
-# ---------------------------------------------------------
+# =========================================================
 
 DESCRIPTION_SIGNALS = {
     "Founder/CEO exposure": (
@@ -298,6 +296,7 @@ DESCRIPTION_SIGNALS = {
             "work directly with the ceo",
             "office of the ceo",
             "leadership team",
+            "executive team",
         ],
         12,
     ),
@@ -310,6 +309,7 @@ DESCRIPTION_SIGNALS = {
             "translate strategy",
             "execution of strategic",
             "cross-functional initiatives",
+            "business strategy",
         ],
         10,
     ),
@@ -336,6 +336,7 @@ DESCRIPTION_SIGNALS = {
             "okr",
             "management reporting",
             "performance management",
+            "business reviews",
         ],
         8,
     ),
@@ -347,6 +348,7 @@ DESCRIPTION_SIGNALS = {
             "stakeholder management",
             "multiple functions",
             "across functions",
+            "senior stakeholders",
         ],
         7,
     ),
@@ -390,15 +392,14 @@ DESCRIPTION_SIGNALS = {
 }
 
 
-# ---------------------------------------------------------
-# NEGATIVE SIGNALS
-# ---------------------------------------------------------
+# =========================================================
+# NEGATIVE DESCRIPTION SIGNALS
+# =========================================================
 
 NEGATIVE_DESCRIPTION_SIGNALS = {
     "Technical role": (
         [
             "software development lifecycle",
-            "engineering teams",
             "software engineering",
             "technical architecture",
             "cloud infrastructure",
@@ -432,25 +433,11 @@ NEGATIVE_DESCRIPTION_SIGNALS = {
         -35,
     ),
 
-    "Pure finance/investment": (
-        [
-            "financial modelling",
-            "financial modeling",
-            "investment banking",
-            "equity research",
-            "valuation models",
-            "deal execution",
-            "due diligence models",
-        ],
-        -15,
-    ),
-
     "Administrative": (
         [
             "calendar management",
             "manage calendar",
             "travel booking",
-            "schedule meetings",
             "administrative support",
         ],
         -35,
@@ -458,41 +445,43 @@ NEGATIVE_DESCRIPTION_SIGNALS = {
 }
 
 
-# ---------------------------------------------------------
+# =========================================================
 # SCORING
-# ---------------------------------------------------------
+# =========================================================
 
 def rank(job):
     title = (job.get("titulo") or "").lower()
     body = (job.get("descricao") or "").lower()
 
-    # Immediate rejection
     for bad_title in HARD_REJECT_TITLE:
         if bad_title in title:
-            return 0, [], f"Rejected: {bad_title}"
+            return 0, [], f"Rejected: {bad_title}", False
 
-    score = 0
-    reasons = []
-
-    # Title score
     title_score = 0
 
     for signal, points in TITLE_SIGNALS.items():
         if signal in title:
             title_score = max(title_score, points)
 
-    if title_score == 0:
-        return 0, [], "No relevant title signal"
+    # IMPORTANT:
+    # Unlike previous version, we do NOT immediately reject a job
+    # just because the title is unusual.
+    description_score = 0
+    reasons = []
 
-    score += title_score
-
-    # Description positives
     for label, (terms, points) in DESCRIPTION_SIGNALS.items():
         if any(term in body for term in terms):
-            score += points
+            description_score += points
             reasons.append(label)
 
-    # Description negatives
+    # Need evidence of relevant work if title itself is not recognised.
+    role_match = title_score > 0 or description_score >= 17
+
+    if not role_match:
+        return 0, reasons, "Insufficient role evidence", False
+
+    score = title_score + description_score
+
     negative_reasons = []
 
     for label, (terms, penalty) in NEGATIVE_DESCRIPTION_SIGNALS.items():
@@ -500,7 +489,6 @@ def rank(job):
             score += penalty
             negative_reasons.append(label)
 
-    # Geography bonus
     market = relevant_market(job)
 
     if market == "India":
@@ -515,7 +503,6 @@ def rank(job):
         score += 6
         reasons.append("Europe")
 
-    # Founder/strategy roles get a slight priority
     if any(
         x in title
         for x in [
@@ -533,26 +520,29 @@ def rank(job):
 
     concern = "; ".join(negative_reasons)
 
-    return score, reasons[:5], concern
+    return score, reasons[:6], concern, True
 
 
-# ---------------------------------------------------------
+# =========================================================
 # VERDICT
-# ---------------------------------------------------------
+# =========================================================
 
 def verdict(score):
     if score >= 85:
         return "APPLY NOW"
+
     if score >= 70:
         return "STRONG"
+
     if score >= 55:
         return "REVIEW"
+
     return "IGNORE"
 
 
-# ---------------------------------------------------------
+# =========================================================
 # COLLECTION
-# ---------------------------------------------------------
+# =========================================================
 
 def collect(cfg):
     jobs = []
@@ -584,9 +574,9 @@ def collect(cfg):
     return jobs
 
 
-# ---------------------------------------------------------
+# =========================================================
 # MAIN
-# ---------------------------------------------------------
+# =========================================================
 
 def main():
 
@@ -597,13 +587,15 @@ def main():
     freshness_hours = cfg["candidate"]["freshness_hours"]
 
     if STATE.exists():
-        seen = set(json.loads(STATE.read_text()))
+        try:
+            seen = set(json.loads(STATE.read_text()))
+        except Exception:
+            seen = set()
     else:
         seen = set()
 
     raw_jobs = collect(cfg)
 
-    # Deduplicate jobs returned during same run
     unique = {}
 
     for job in raw_jobs:
@@ -612,14 +604,20 @@ def main():
         if jid:
             unique[jid] = job
 
+    # Funnel diagnostics
     fresh_count = 0
+    market_count = 0
+    role_match_count = 0
+    score_40_count = 0
+    score_55_count = 0
+    score_70_count = 0
+
     scored = []
 
     for jid, job in unique.items():
 
-        if jid in seen:
-            continue
-
+        # For debugging, freshness comes before seen-state.
+        # This lets us understand the full current market.
         if not is_fresh(job, freshness_hours):
             continue
 
@@ -630,10 +628,30 @@ def main():
         if not market:
             continue
 
-        score, reasons, concern = rank(job)
+        market_count += 1
 
-        # Do not show weak matches
+        score, reasons, concern, role_match = rank(job)
+
+        if not role_match:
+            continue
+
+        role_match_count += 1
+
+        if score >= 40:
+            score_40_count += 1
+
+        if score >= 55:
+            score_55_count += 1
+
+        if score >= 70:
+            score_70_count += 1
+
+        # Do not surface weak roles.
         if score < 55:
+            continue
+
+        # Don't show previously surfaced jobs again.
+        if jid in seen:
             continue
 
         scored.append({
@@ -656,28 +674,23 @@ def main():
     scored.sort(
         key=lambda row: (
             row["score"],
-            -(row["age_hours"] or 999)
+            -(row["age_hours"] or 999),
         ),
         reverse=True,
     )
 
-    # We want 20+, but never pad with junk.
+    target = cfg["candidate"]["daily_target"]
+
     strong = [
-        row
-        for row in scored
+        row for row in scored
         if row["score"] >= 70
     ]
 
-    target = cfg["candidate"]["daily_target"]
-
-    number_to_show = max(
-        target,
-        len(strong)
-    )
+    # Target 20+, but never manufacture junk.
+    number_to_show = max(target, len(strong))
 
     selected = scored[:number_to_show]
 
-    # CSV
     today = dt.date.today().isoformat()
 
     path = OUT / f"dev_radar_{today}.csv"
@@ -702,18 +715,17 @@ def main():
     with path.open(
         "w",
         newline="",
-        encoding="utf-8"
+        encoding="utf-8",
     ) as handle:
 
         writer = csv.DictWriter(
             handle,
-            fieldnames=fields
+            fieldnames=fields,
         )
 
         writer.writeheader()
         writer.writerows(selected)
 
-    # Only mark jobs actually surfaced to Dev as seen
     seen.update(
         row["id"]
         for row in selected
@@ -722,29 +734,40 @@ def main():
     STATE.write_text(
         json.dumps(
             sorted(seen),
-            indent=2
+            indent=2,
         )
     )
 
     print()
-    print("========= DEV RADAR =========")
-    print(f"Jobs collected:       {len(raw_jobs)}")
-    print(f"Unique jobs:          {len(unique)}")
-    print(f"Fresh <=48h:          {fresh_count}")
-    print(f"Relevant >=55:        {len(scored)}")
-    print(f"Strong >=70:          {len(strong)}")
-    print(f"Surfaced today:       {len(selected)}")
-    print(f"Output:               {path}")
-    print("=============================")
+    print("============== DEV RADAR FUNNEL ==============")
+    print(f"Jobs collected:          {len(raw_jobs)}")
+    print(f"Unique jobs:             {len(unique)}")
+    print(f"Fresh <=48h:             {fresh_count}")
+    print(f"Right geography:         {market_count}")
+    print(f"Role evidence matched:   {role_match_count}")
+    print(f"Score >=40:              {score_40_count}")
+    print(f"Relevant >=55:           {score_55_count}")
+    print(f"Strong >=70:             {score_70_count}")
+    print(f"New jobs surfaced:       {len(selected)}")
+    print(f"Output:                  {path}")
+    print("===============================================")
 
-    for row in selected:
+    if selected:
         print()
-        print(
-            f'{row["score"]} | '
-            f'{row["verdict"]} | '
-            f'{row["company"]} | '
-            f'{row["role"]}'
-        )
+        print("TOP RESULTS")
+
+        for row in selected:
+            print()
+            print(
+                f'{row["score"]} | '
+                f'{row["verdict"]} | '
+                f'{row["company"]} | '
+                f'{row["role"]} | '
+                f'{row["location"]}'
+            )
+    else:
+        print()
+        print("No new jobs surfaced in this run.")
 
 
 if __name__ == "__main__":
