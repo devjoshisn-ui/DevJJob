@@ -1,48 +1,214 @@
 candidate:
   name: "Dev Joshi"
+
   freshness_hours: 48
   daily_target: 20
+
   india_base_floor_lpa: 40
   india_equity_exception_lpa: 35
+
   europe_requires_sponsorship: true
   minimum_monthly_savings_inr: 130000
 
+
+# =========================================================
+# ROLE DISCOVERY
+# Broad enough to find non-obvious roles.
+# Final relevance is decided by dev_radar.py.
+# =========================================================
+
 role_keywords:
+
+  # Founder / executive office
   - chief of staff
-  - founder
+  - founder's office
+  - founders office
+  - founder office
   - ceo office
+  - office of the ceo
+  - office of the founder
+  - executive office
+  - promoter office
+  - chairman office
+  - managing director office
+
+  # Strategy
   - strategy
+  - strategy and operations
+  - strategy & operations
+  - strategic operations
   - strategic initiatives
+  - corporate strategy
+  - commercial strategy
+  - growth strategy
+
+  # Business operations
   - business operations
   - bizops
-  - operations
-  - special projects
-  - transformation
-  - program manager
-  - portfolio operations
-  - value creation
-  - venture builder
+  - operations strategy
+  - operational excellence
+  - operating model
+  - business transformation
+
+  # General management
   - business head
   - general manager
   - country manager
-  - commercial strategy
+  - market lead
+  - regional lead
+  - business lead
+
+  # Special projects
+  - special projects
+  - strategic projects
+  - transformation
+  - transformation lead
+  - program manager
+  - programme manager
+
+  # Portfolio / investing ecosystem
+  - portfolio operations
+  - portfolio strategy
+  - portfolio acceleration
+  - value creation
   - operating partner
+  - platform
+  - venture builder
+  - venture development
+  - venture lead
+
+  # Commercial / GTM
+  - commercial operations
+  - revenue strategy
+  - growth operations
+  - go-to-market
+  - gtm strategy
+  - partnerships strategy
+
 
 exclude_title_keywords:
+
+  # Junior
   - intern
   - internship
-  - graduate
+  - graduate trainee
   - junior analyst
+  - management trainee
+
+  # Admin
   - executive assistant
   - personal assistant
+  - administrative assistant
   - receptionist
+
+  # Engineering / technology
   - software engineer
+  - software developer
   - developer
+  - devops
+  - site reliability
+  - sre
+  - engineering manager
+  - technical program manager
+  - technical project manager
+  - technical product manager
+  - solutions architect
+  - cloud engineer
+  - data engineer
   - data scientist
+  - machine learning engineer
+
+  # Security / IT
+  - security operations
+  - security engineer
+  - cybersecurity
+  - cyber security
+  - soc analyst
+  - it operations
+  - it support
+  - network engineer
+
+  # Specialist
   - accountant
   - legal counsel
+  - lawyer
+  - payroll
+  - graphic designer
+  - product designer
+
+
+# =========================================================
+# ATS SOURCES
+#
+# These are ATS board identifiers, NOT simply a wishlist
+# of company names.
+#
+# We'll continue expanding this universe after validating
+# which boards consistently return useful roles.
+# =========================================================
 
 sources:
-  ashby: [razorpay, cred, deel, remote, notion, ramp, rippling]
-  greenhouse: [meesho, phonepe, browserstack, chargebee, freshworks, deliveroo, wise, revolut, datadog, cloudflare, mongodb, zapier]
-  lever: [slice, urbancompany, groww, cred, sprinto, wingify, commercetools, miro, typeform]
+
+  ashby:
+
+    # India / India-accessible / global scaleups
+    - razorpay
+    - cred
+    - deel
+    - remote
+    - notion
+    - ramp
+    - rippling
+
+    # Startup / venture ecosystem discovery
+    - Pear-VC
+    - humanarchive
+    - waystation
+    - aegis-ai
+    - clasp-group
+    - PrimeIntellect
+    - century.health
+    - GigaML
+    - teio
+    - dyna-robotics
+    - spaitial
+
+
+  greenhouse:
+
+    # India / global technology
+    - meesho
+    - phonepe
+    - browserstack
+    - chargebee
+    - freshworks
+
+    # International scaleups
+    - deliveroo
+    - wise
+    - revolut
+    - datadog
+    - cloudflare
+    - mongodb
+    - zapier
+
+
+  lever:
+
+    # India
+    - slice
+    - urbancompany
+    - groww
+    - sprinto
+    - wingify
+    - gushwork
+
+    # Global / remote / Europe
+    - commercetools
+    - miro
+    - typeform
+    - fireworkhq
+    - shieldai
+    - gohighlevel
+    - Onehouse
+    - roadrunner-studios
