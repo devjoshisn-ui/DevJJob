@@ -3,8 +3,12 @@
 import csv
 import datetime as dt
 import json
+import re
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
+import requests
 import yaml
 
 from collectors.ashby import fetch_ashby
@@ -12,164 +16,538 @@ from collectors.greenhouse import fetch_greenhouse
 from collectors.lever import fetch_lever
 
 
+# ============================================================
+# DEV RADAR
+# ============================================================
+
 ROOT = Path(__file__).parent
 OUT = ROOT / "output"
 OUT.mkdir(exist_ok=True)
 
 STATE = OUT / "dev_seen.json"
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 DevJobRadar/1.0"
+}
 
-# =========================================================
-# DATE / FRESHNESS
-# =========================================================
+
+# ============================================================
+# BASIC HELPERS
+# ============================================================
+
+def norm(value):
+    return str(value or "").lower().strip()
+
+
+def contains(text, terms):
+    text = norm(text)
+    return any(norm(term) in text for term in terms)
+
+
+def full_text(job):
+    return " ".join([
+        norm(job.get("titulo")),
+        norm(job.get("cidade")),
+        norm(job.get("descricao")),
+    ])
+
+
+def strip_html(value):
+    text = re.sub(r"<[^>]+>", " ", str(value or ""))
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+# ============================================================
+# DATE HANDLING
+# ============================================================
 
 def parse_date(value):
+
     if not value:
         return None
 
+    value = str(value).strip()
+
     try:
-        value = value.replace("Z", "+00:00")
-        parsed = dt.datetime.fromisoformat(value)
+        parsed = dt.datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        )
 
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+            parsed = parsed.replace(
+                tzinfo=dt.timezone.utc
+            )
 
         return parsed.astimezone(dt.timezone.utc)
 
-    except (ValueError, TypeError, AttributeError):
-        try:
-            parsed = dt.datetime.fromisoformat(str(value)[:10])
-            return parsed.replace(tzinfo=dt.timezone.utc)
-        except (ValueError, TypeError):
-            return None
+    except Exception:
+        pass
+
+    try:
+        parsed = parsedate_to_datetime(value)
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(
+                tzinfo=dt.timezone.utc
+            )
+
+        return parsed.astimezone(dt.timezone.utc)
+
+    except Exception:
+        pass
+
+    try:
+        parsed = dt.datetime.strptime(
+            value[:10],
+            "%Y-%m-%d",
+        )
+
+        return parsed.replace(
+            tzinfo=dt.timezone.utc
+        )
+
+    except Exception:
+        return None
 
 
 def age_hours(job):
-    posted = parse_date(job.get("publicado_em", ""))
+
+    posted = parse_date(
+        job.get("publicado_em")
+    )
 
     if not posted:
         return None
 
-    delta = dt.datetime.now(dt.timezone.utc) - posted
-    return round(delta.total_seconds() / 3600, 1)
+    delta = (
+        dt.datetime.now(dt.timezone.utc)
+        - posted
+    )
+
+    return round(
+        delta.total_seconds() / 3600,
+        1,
+    )
 
 
 def is_fresh(job, hours=48):
+
     age = age_hours(job)
-    return age is not None and 0 <= age <= hours
+
+    return (
+        age is not None
+        and 0 <= age <= hours
+    )
 
 
-# =========================================================
+# ============================================================
+# BROAD PUBLIC SOURCES
+# ============================================================
+
+def fetch_remoteok():
+
+    url = "https://remoteok.com/api"
+
+    r = requests.get(
+        url,
+        headers=HEADERS,
+        timeout=30,
+    )
+
+    r.raise_for_status()
+
+    jobs = []
+
+    for j in r.json():
+
+        if not isinstance(j, dict):
+            continue
+
+        if not j.get("id"):
+            continue
+
+        description = (
+            strip_html(j.get("description"))
+            + " "
+            + " ".join(j.get("tags") or [])
+        )
+
+        jobs.append({
+            "id": f"remoteok:{j.get('id')}",
+            "fonte": "remoteok",
+            "titulo": j.get("position", ""),
+            "empresa": j.get("company", ""),
+            "cidade": j.get("location") or "Remote",
+            "estado": "",
+            "remoto": True,
+            "link": j.get("url", ""),
+            "descricao": description,
+            "publicado_em": j.get("date", ""),
+        })
+
+    return jobs
+
+
+def fetch_remotive():
+
+    url = "https://remotive.com/api/remote-jobs"
+
+    r = requests.get(
+        url,
+        headers=HEADERS,
+        timeout=30,
+    )
+
+    r.raise_for_status()
+
+    jobs = []
+
+    for j in r.json().get("jobs", []):
+
+        description = (
+            strip_html(j.get("description"))
+            + " "
+            + str(j.get("salary") or "")
+        )
+
+        jobs.append({
+            "id": f"remotive:{j.get('id')}",
+            "fonte": "remotive",
+            "titulo": j.get("title", ""),
+            "empresa": j.get("company_name", ""),
+            "cidade": (
+                j.get("candidate_required_location")
+                or "Remote"
+            ),
+            "estado": "",
+            "remoto": True,
+            "link": j.get("url", ""),
+            "descricao": description,
+            "publicado_em": (
+                j.get("publication_date", "")
+            ),
+        })
+
+    return jobs
+
+
+def fetch_wwr():
+
+    url = (
+        "https://weworkremotely.com/"
+        "remote-jobs.rss"
+    )
+
+    r = requests.get(
+        url,
+        headers=HEADERS,
+        timeout=30,
+    )
+
+    r.raise_for_status()
+
+    root = ET.fromstring(r.content)
+
+    jobs = []
+
+    for item in root.iter("item"):
+
+        raw_title = (
+            item.findtext("title") or ""
+        ).strip()
+
+        company = ""
+        role = raw_title
+
+        if ": " in raw_title:
+            company, role = raw_title.split(
+                ": ",
+                1,
+            )
+
+        link = (
+            item.findtext("link") or ""
+        ).strip()
+
+        jobs.append({
+            "id": f"wwr:{link}",
+            "fonte": "weworkremotely",
+            "titulo": role,
+            "empresa": company,
+            "cidade": "Remote",
+            "estado": "",
+            "remoto": True,
+            "link": link,
+            "descricao": strip_html(
+                item.findtext("description")
+            ),
+            "publicado_em": (
+                item.findtext("pubDate")
+                or ""
+            ),
+        })
+
+    return jobs
+
+
+# ============================================================
 # GEOGRAPHY
-# =========================================================
+# ============================================================
 
-INDIA_TERMS = [
+INDIA = [
     "india",
     "bengaluru",
     "bangalore",
-    "gurugram",
     "gurgaon",
+    "gurugram",
     "mumbai",
-    "delhi",
     "new delhi",
+    "delhi",
+    "noida",
     "pune",
     "hyderabad",
     "chennai",
-    "noida",
+    "kolkata",
     "ahmedabad",
     "indore",
     "jaipur",
-    "kolkata",
     "kochi",
     "coimbatore",
     "chandigarh",
-    "vadodara",
     "surat",
+    "vadodara",
 ]
 
-EUROPE_TERMS = [
-    "europe",
-    "emea",
+
+UK = [
     "united kingdom",
-    "uk",
     "london",
     "manchester",
-    "germany",
-    "berlin",
-    "munich",
-    "netherlands",
-    "amsterdam",
-    "france",
-    "paris",
-    "spain",
-    "madrid",
-    "barcelona",
-    "portugal",
-    "lisbon",
-    "ireland",
-    "dublin",
-    "sweden",
-    "stockholm",
-    "denmark",
-    "copenhagen",
-    "finland",
-    "helsinki",
-    "norway",
-    "oslo",
-    "switzerland",
-    "zurich",
+    "birmingham",
+    "edinburgh",
+    "glasgow",
+    "bristol",
+    "england",
+    "scotland",
+    "wales",
+    "northern ireland",
+]
+
+
+EUROPE = [
     "austria",
     "vienna",
     "belgium",
     "brussels",
-    "poland",
-    "warsaw",
-    "czech",
+    "bulgaria",
+    "sofia",
+    "croatia",
+    "zagreb",
+    "cyprus",
+    "czechia",
+    "czech republic",
     "prague",
+    "denmark",
+    "copenhagen",
     "estonia",
     "tallinn",
+    "finland",
+    "helsinki",
+    "france",
+    "paris",
+    "germany",
+    "berlin",
+    "munich",
+    "hamburg",
+    "frankfurt",
+    "greece",
+    "athens",
+    "hungary",
+    "budapest",
+    "iceland",
+    "ireland",
+    "dublin",
     "italy",
     "milan",
+    "rome",
+    "latvia",
+    "riga",
+    "liechtenstein",
+    "lithuania",
+    "vilnius",
+    "luxembourg",
+    "malta",
+    "netherlands",
+    "amsterdam",
+    "rotterdam",
+    "norway",
+    "oslo",
+    "poland",
+    "warsaw",
+    "krakow",
+    "portugal",
+    "lisbon",
+    "porto",
     "romania",
     "bucharest",
-    "luxembourg",
+    "slovakia",
+    "bratislava",
+    "slovenia",
+    "ljubljana",
+    "spain",
+    "madrid",
+    "barcelona",
+    "sweden",
+    "stockholm",
+    "switzerland",
+    "zurich",
+    "geneva",
 ]
 
 
-GLOBAL_REMOTE_TERMS = [
+GLOBAL_REMOTE = [
     "worldwide",
-    "work from anywhere",
-    "remote globally",
-    "global remote",
+    "world wide",
     "anywhere in the world",
-    "remote - worldwide",
+    "work from anywhere",
+    "global remote",
+    "remote globally",
     "remote worldwide",
+    "anywhere",
 ]
 
 
-def relevant_market(job):
-    location = (job.get("cidade") or "").lower()
-    description = (job.get("descricao") or "").lower()
+REMOTE_BLOCKED = [
+    "us only",
+    "u.s. only",
+    "united states only",
+    "must be based in the us",
+    "must reside in the us",
+    "remote - us",
+    "remote us",
+    "canada only",
+    "remote canada",
+    "uk only",
+    "remote uk",
+    "europe only",
+    "eu only",
+    "emea only",
+]
 
-    text = f"{location} {description[:4000]}"
 
-    if any(term in text for term in INDIA_TERMS):
+def market(job):
+
+    location = norm(job.get("cidade"))
+    text = full_text(job)
+
+    # UK ALWAYS excluded.
+    if contains(location, UK):
+        return ""
+
+    if contains(location, INDIA):
         return "India"
 
-    if any(term in text for term in EUROPE_TERMS):
+    if contains(location, EUROPE):
         return "Europe"
 
-    if any(term in text for term in GLOBAL_REMOTE_TERMS):
-        return "Global Remote"
+    # Some ATS put country only in description.
+    if contains(text[:5000], INDIA):
+        return "India"
+
+    # Remote jobs must actually look globally accessible.
+    if job.get("remoto"):
+
+        if contains(text, REMOTE_BLOCKED):
+            return ""
+
+        if contains(text, GLOBAL_REMOTE):
+            return "Global Remote"
+
+        # Explicit India eligibility.
+        if "india" in text:
+            return "India"
 
     return ""
 
 
-# =========================================================
-# HARD REJECTIONS
-# =========================================================
+# ============================================================
+# EUROPE VISA
+# ============================================================
 
-HARD_REJECT_TITLE = [
+VISA_YES = [
+    "visa sponsorship",
+    "visa support",
+    "work visa sponsorship",
+    "sponsorship available",
+    "sponsor visas",
+    "sponsor a visa",
+    "immigration support",
+    "relocation and visa",
+    "relocation support",
+    "global mobility",
+]
+
+
+VISA_NO = [
+    "no visa sponsorship",
+    "unable to sponsor",
+    "cannot sponsor",
+    "no sponsorship available",
+    "must already have the right to work",
+    "must have the right to work",
+    "existing right to work",
+    "without sponsorship",
+]
+
+
+LIKELY_SPONSORS = [
+    "deel",
+    "remote",
+    "revolut",
+    "wise",
+    "datadog",
+    "cloudflare",
+    "mongodb",
+    "notion",
+    "miro",
+    "typeform",
+    "commercetools",
+    "rippling",
+]
+
+
+def visa_check(job, job_market):
+
+    if job_market == "India":
+        return "NOT REQUIRED", True
+
+    if job_market == "Global Remote":
+        return "REMOTE FROM INDIA", True
+
+    text = full_text(job)
+
+    if contains(text, VISA_NO):
+        return "NO", False
+
+    if contains(text, VISA_YES):
+        return "SPONSORSHIP", True
+
+    company = norm(job.get("empresa"))
+
+    if any(x in company for x in LIKELY_SPONSORS):
+        return "LIKELY", True
+
+    # User asked for sponsorship or VERY likely.
+    # Unknown Europe roles therefore do not pass.
+    return "UNKNOWN", False
+
+
+# ============================================================
+# HARD EXCLUSIONS
+# ============================================================
+
+TECH = [
     "software engineer",
     "software developer",
     "developer",
@@ -185,170 +563,218 @@ HARD_REJECT_TITLE = [
     "cloud engineer",
     "data engineer",
     "data scientist",
-    "machine learning engineer",
-
+    "machine learning",
     "security operations",
     "security engineer",
-    "cyber security",
     "cybersecurity",
+    "cyber security",
     "soc analyst",
     "it operations",
     "it support",
-    "systems administrator",
     "network engineer",
-
-    "accountant",
-    "legal counsel",
-    "lawyer",
-    "tax manager",
-    "payroll",
-    "graphic designer",
-    "product designer",
-
-    "intern",
-    "internship",
-    "graduate trainee",
-    "junior analyst",
-    "management trainee",
-
-    "executive assistant",
-    "personal assistant",
-    "administrative assistant",
-    "office assistant",
-    "receptionist",
 ]
 
 
-# =========================================================
-# TITLE SIGNALS
-# =========================================================
-
-TITLE_SIGNALS = {
-    "chief of staff": 35,
-    "founder's office": 35,
-    "founders office": 35,
-    "founder office": 35,
-    "ceo office": 32,
-    "office of the ceo": 32,
-    "promoter office": 32,
-    "chairman office": 30,
-
-    "strategy and operations": 32,
-    "strategy & operations": 32,
-    "strategic operations": 28,
-
-    "strategic initiatives": 28,
-    "special projects": 27,
-    "strategic projects": 25,
-
-    "business operations": 27,
-    "bizops": 27,
-
-    "business transformation": 25,
-    "transformation lead": 25,
-    "transformation manager": 22,
-
-    "commercial strategy": 24,
-    "corporate strategy": 25,
-    "growth strategy": 22,
-
-    "business head": 25,
-    "general manager": 20,
-    "country manager": 20,
-    "market lead": 18,
-    "business lead": 18,
-
-    "portfolio operations": 28,
-    "portfolio strategy": 25,
-    "portfolio acceleration": 25,
-    "value creation": 28,
-
-    "venture builder": 27,
-    "venture lead": 25,
-    "venture development": 22,
-
-    "operating partner": 25,
-
-    "operations lead": 18,
-    "operations manager": 14,
-
-    "program manager": 10,
-    "programme manager": 10,
-
-    "commercial operations": 18,
-    "growth operations": 16,
-    "revenue strategy": 18,
-}
+SALES = [
+    "account executive",
+    "sales executive",
+    "sales manager",
+    "sales director",
+    "head of sales",
+    "business development",
+    "bd manager",
+    "sales development",
+    "sales representative",
+    "enterprise sales",
+    "inside sales",
+    "field sales",
+    "regional sales",
+]
 
 
-# =========================================================
-# DESCRIPTION SIGNALS
-# =========================================================
+ADMIN = [
+    "executive assistant",
+    "personal assistant",
+    "administrative assistant",
+    "receptionist",
+    "office assistant",
+]
 
-DESCRIPTION_SIGNALS = {
+
+JUNIOR = [
+    "intern",
+    "internship",
+    "graduate trainee",
+    "management trainee",
+    "junior analyst",
+]
+
+
+SPECIALIST = [
+    "accountant",
+    "legal counsel",
+    "lawyer",
+    "payroll",
+    "graphic designer",
+    "product designer",
+]
+
+
+def hard_reject(job):
+
+    title = norm(job.get("titulo"))
+
+    if contains(title, TECH):
+        return "Technical"
+
+    if contains(title, SALES):
+        return "Sales / BD"
+
+    if contains(title, ADMIN):
+        return "Administrative"
+
+    if contains(title, JUNIOR):
+        return "Too junior"
+
+    if contains(title, SPECIALIST):
+        return "Specialist function"
+
+    return ""
+
+
+# ============================================================
+# ADMIN-HEAVY CHIEF OF STAFF
+# ============================================================
+
+COS_ADMIN = [
+    "calendar management",
+    "manage calendar",
+    "schedule meetings",
+    "travel booking",
+    "travel arrangements",
+    "expense reports",
+    "personal errands",
+    "administrative support",
+]
+
+
+def admin_cos(job):
+
+    title = norm(job.get("titulo"))
+
+    if not contains(
+        title,
+        [
+            "chief of staff",
+            "founder",
+            "ceo office",
+        ],
+    ):
+        return False
+
+    body = norm(job.get("descricao"))
+
+    hits = sum(
+        term in body
+        for term in COS_ADMIN
+    )
+
+    return hits >= 2
+
+
+# ============================================================
+# DEV RESPONSIBILITY FIT
+# ============================================================
+
+FIT = {
+
     "Founder/CEO exposure": (
         [
             "work directly with the founder",
             "work closely with the founder",
-            "partner with the founder",
             "report to the founder",
-            "report directly to the ceo",
+            "partner with the founder",
             "work directly with the ceo",
+            "report directly to the ceo",
             "office of the ceo",
-            "leadership team",
-            "executive team",
+            "office of the founder",
+            "founder's office",
+            "founders office",
+            "executive leadership team",
         ],
         12,
     ),
 
-    "Strategy to execution": (
+    "Strategy → execution": (
         [
-            "strategy and execution",
             "strategic initiatives",
             "strategic priorities",
+            "strategy and execution",
+            "strategy through execution",
             "translate strategy",
-            "execution of strategic",
-            "cross-functional initiatives",
+            "execute strategic",
+            "drive strategic",
             "business strategy",
+            "company strategy",
+            "strategic planning",
         ],
         10,
-    ),
-
-    "P&L / commercial": (
-        [
-            "p&l",
-            "profit and loss",
-            "revenue growth",
-            "commercial strategy",
-            "commercial performance",
-            "unit economics",
-            "profitability",
-        ],
-        9,
-    ),
-
-    "Operating systems": (
-        [
-            "operating model",
-            "operating cadence",
-            "business cadence",
-            "kpi",
-            "okr",
-            "management reporting",
-            "performance management",
-            "business reviews",
-        ],
-        8,
     ),
 
     "Cross-functional leadership": (
         [
             "cross-functional",
             "cross functional",
-            "stakeholder management",
-            "multiple functions",
             "across functions",
+            "multiple functions",
             "senior stakeholders",
+            "stakeholder management",
+        ],
+        7,
+    ),
+
+    "P&L / commercial ownership": (
+        [
+            "p&l",
+            "profit and loss",
+            "business performance",
+            "commercial performance",
+            "profitability",
+            "unit economics",
+            "revenue growth",
+            "margin improvement",
+        ],
+        9,
+    ),
+
+    "Operating model / KPIs": (
+        [
+            "operating model",
+            "operating cadence",
+            "business cadence",
+            "management reporting",
+            "business reviews",
+            "weekly business review",
+            "monthly business review",
+            "performance management",
+            "kpi",
+            "okr",
+            "governance",
+        ],
+        8,
+    ),
+
+    "Transformation": (
+        [
+            "business transformation",
+            "transformation program",
+            "transformation programme",
+            "operational excellence",
+            "process improvement",
+            "business improvement",
+            "cost optimization",
+            "cost optimisation",
+            "operating efficiency",
         ],
         7,
     ),
@@ -360,192 +786,382 @@ DESCRIPTION_SIGNALS = {
             "new business",
             "new venture",
             "business building",
+            "build from scratch",
             "launch new",
-            "go-to-market",
-            "go to market",
+            "market expansion",
         ],
         8,
     ),
 
-    "Transformation": (
+    "GTM strategy": (
         [
-            "transformation",
-            "process improvement",
-            "operational excellence",
-            "business improvement",
-            "cost optimization",
-            "cost optimisation",
-        ],
-        7,
-    ),
-
-    "International": (
-        [
+            "go-to-market strategy",
+            "go to market strategy",
+            "gtm strategy",
+            "market entry",
             "international expansion",
-            "global expansion",
-            "multiple markets",
-            "new markets",
-            "international markets",
         ],
-        5,
+        6,
+    ),
+
+    "Portfolio/value creation": (
+        [
+            "portfolio operations",
+            "portfolio companies",
+            "value creation",
+            "portfolio acceleration",
+            "operating partner",
+            "portfolio support",
+            "portfolio strategy",
+        ],
+        10,
+    ),
+
+    "Executive special projects": (
+        [
+            "special projects",
+            "strategic projects",
+            "executive priorities",
+            "ceo priorities",
+            "founder priorities",
+            "mission critical initiatives",
+        ],
+        8,
     ),
 }
 
 
-# =========================================================
-# NEGATIVE DESCRIPTION SIGNALS
-# =========================================================
-
-NEGATIVE_DESCRIPTION_SIGNALS = {
-    "Technical role": (
-        [
-            "software development lifecycle",
-            "software engineering",
-            "technical architecture",
-            "cloud infrastructure",
-            "site reliability engineering",
-            "production systems",
-            "technical roadmap",
-        ],
-        -35,
-    ),
-
-    "Security role": (
-        [
-            "security operations center",
-            "security operations centre",
-            "incident response",
-            "cybersecurity",
-            "threat detection",
-            "security monitoring",
-            "soc team",
-        ],
-        -45,
-    ),
-
-    "IT role": (
-        [
-            "it infrastructure",
-            "information technology",
-            "network infrastructure",
-            "systems administration",
-        ],
-        -35,
-    ),
-
-    "Administrative": (
-        [
-            "calendar management",
-            "manage calendar",
-            "travel booking",
-            "administrative support",
-        ],
-        -35,
-    ),
+TITLE_BONUS = {
+    "chief of staff": 12,
+    "founder's office": 12,
+    "founders office": 12,
+    "ceo office": 12,
+    "office of the ceo": 12,
+    "strategy and operations": 11,
+    "strategy & operations": 11,
+    "strategic initiatives": 10,
+    "business operations": 9,
+    "bizops": 9,
+    "special projects": 9,
+    "corporate strategy": 8,
+    "business transformation": 8,
+    "portfolio operations": 10,
+    "value creation": 10,
+    "venture builder": 9,
+    "venture lead": 8,
+    "business head": 9,
+    "general manager": 8,
+    "country manager": 8,
+    "product strategy": 6,
 }
 
 
-# =========================================================
-# SCORING
-# =========================================================
+# ============================================================
+# EXPERIENCE
+# ============================================================
 
-def rank(job):
-    title = (job.get("titulo") or "").lower()
-    body = (job.get("descricao") or "").lower()
+def required_years(job):
 
-    for bad_title in HARD_REJECT_TITLE:
-        if bad_title in title:
-            return 0, [], f"Rejected: {bad_title}", False
+    text = full_text(job)
 
-    title_score = 0
+    patterns = [
+        r"(\d+)\+\s*years",
+        r"(\d+)\+\s*yrs",
+        r"at least\s+(\d+)\s+years",
+        r"minimum\s+(?:of\s+)?(\d+)\s+years",
+    ]
 
-    for signal, points in TITLE_SIGNALS.items():
-        if signal in title:
-            title_score = max(title_score, points)
+    values = []
 
-    # IMPORTANT:
-    # Unlike previous version, we do NOT immediately reject a job
-    # just because the title is unusual.
-    description_score = 0
+    for pattern in patterns:
+
+        for value in re.findall(pattern, text):
+
+            try:
+                values.append(int(value))
+            except Exception:
+                pass
+
+    return min(values) if values else None
+
+
+# ============================================================
+# INDIA COMPENSATION
+# ============================================================
+
+def india_salary(job):
+
+    text = full_text(job)
+
+    patterns = [
+        r"₹\s*(\d+(?:\.\d+)?)\s*(?:lpa|lakh|lakhs)",
+        r"inr\s*(\d+(?:\.\d+)?)\s*(?:lpa|lakh|lakhs)",
+        r"(\d+(?:\.\d+)?)\s*lpa",
+    ]
+
+    values = []
+
+    for pattern in patterns:
+
+        for x in re.findall(
+            pattern,
+            text,
+            flags=re.I,
+        ):
+
+            try:
+                value = float(x)
+
+                if 10 <= value <= 300:
+                    values.append(value)
+
+            except Exception:
+                pass
+
+    return max(values) if values else None
+
+
+EQUITY = [
+    "equity",
+    "esop",
+    "esops",
+    "stock options",
+    "employee stock",
+]
+
+
+def compensation(job, job_market):
+
+    if job_market != "India":
+        return "UNKNOWN", True
+
+    salary = india_salary(job)
+
+    if salary is None:
+        return "UNKNOWN", True
+
+    if salary >= 40:
+        return f"₹{salary:g}L+ indicated", True
+
+    if salary >= 35 and contains(
+        full_text(job),
+        EQUITY,
+    ):
+        return f"₹{salary:g}L + equity", True
+
+    return f"₹{salary:g}L indicated", False
+
+
+# ============================================================
+# SCORE
+# ============================================================
+
+def score(job, job_market, visa):
+
+    text = full_text(job)
+    title = norm(job.get("titulo"))
+
+    total = 0
     reasons = []
+    concerns = []
 
-    for label, (terms, points) in DESCRIPTION_SIGNALS.items():
-        if any(term in body for term in terms):
-            description_score += points
+    responsibility = 0
+
+    for label, (terms, points) in FIT.items():
+
+        if contains(text, terms):
+
+            responsibility += points
             reasons.append(label)
 
-    # Need evidence of relevant work if title itself is not recognised.
-    role_match = title_score > 0 or description_score >= 17
+    responsibility = min(
+        responsibility,
+        40,
+    )
 
-    if not role_match:
-        return 0, reasons, "Insufficient role evidence", False
-
-    score = title_score + description_score
-
-    negative_reasons = []
-
-    for label, (terms, penalty) in NEGATIVE_DESCRIPTION_SIGNALS.items():
-        if any(term in body for term in terms):
-            score += penalty
-            negative_reasons.append(label)
-
-    market = relevant_market(job)
-
-    if market == "India":
-        score += 12
-        reasons.append("India priority")
-
-    elif market == "Global Remote":
-        score += 8
-        reasons.append("Global remote")
-
-    elif market == "Europe":
-        score += 6
-        reasons.append("Europe")
-
-    if any(
-        x in title
-        for x in [
-            "chief of staff",
-            "founder",
-            "ceo office",
-            "strategic initiatives",
-            "strategy and operations",
-            "strategy & operations",
+    # Actual work matters most.
+    if responsibility < 14:
+        return 0, reasons, [
+            "Insufficient responsibility fit"
         ]
+
+    total += responsibility
+
+    # Title is only a bonus.
+    title_points = 0
+
+    for phrase, points in TITLE_BONUS.items():
+
+        if phrase in title:
+            title_points = max(
+                title_points,
+                points,
+            )
+
+    total += title_points
+
+    # Experience.
+    years = required_years(job)
+
+    if years is None:
+        total += 8
+
+    elif years <= 7:
+        total += 15
+
+    elif years <= 8:
+        total += 13
+
+    elif years <= 10:
+        total += 9
+        concerns.append(
+            f"JD asks {years}+ years"
+        )
+
+    elif years <= 11:
+
+        if responsibility >= 28:
+            total += 3
+            concerns.append(
+                f"Stretch: {years}+ years"
+            )
+        else:
+            return 0, reasons, [
+                f"Too senior: {years}+ years"
+            ]
+
+    else:
+        return 0, reasons, [
+            f"Normally exclude: {years}+ years"
+        ]
+
+    # Founder/executive exposure.
+    if contains(
+        text,
+        [
+            "founder",
+            "ceo",
+            "chief executive",
+            "executive leadership",
+        ],
     ):
-        score += 8
+        total += 10
 
-    score = max(0, min(score, 100))
+    # Geography/work rights.
+    if job_market == "India":
+        total += 10
 
-    concern = "; ".join(negative_reasons)
+    elif job_market == "Europe":
 
-    return score, reasons[:6], concern, True
+        if visa == "SPONSORSHIP":
+            total += 10
+        else:
+            total += 7
+
+    elif job_market == "Global Remote":
+        total += 9
+
+    # Compensation.
+    salary, ok = compensation(
+        job,
+        job_market,
+    )
+
+    if not ok:
+        return 0, reasons, [salary]
+
+    if salary == "UNKNOWN":
+        total += 5
+        concerns.append(
+            "Compensation not published"
+        )
+    else:
+        total += 10
+
+    # Freshness.
+    age = age_hours(job)
+
+    if age is not None:
+
+        if age <= 12:
+            total += 5
+        elif age <= 24:
+            total += 4
+        elif age <= 36:
+            total += 3
+        else:
+            total += 2
+
+    # Penalise disguised technical work.
+    if contains(
+        norm(job.get("descricao")),
+        [
+            "software development lifecycle",
+            "site reliability engineering",
+            "technical architecture",
+            "cloud infrastructure",
+            "security operations center",
+            "security operations centre",
+        ],
+    ):
+        total -= 30
+        concerns.append(
+            "Technical delivery content"
+        )
+
+    # Penalise disguised quota sales.
+    if contains(
+        norm(job.get("descricao")),
+        [
+            "sales quota",
+            "quota-carrying",
+            "quota carrying",
+            "cold calling",
+            "prospecting",
+            "close deals",
+        ],
+    ):
+        total -= 35
+        concerns.append(
+            "Sales/quota content"
+        )
+
+    return (
+        max(0, min(round(total), 100)),
+        reasons[:5],
+        concerns[:4],
+    )
 
 
-# =========================================================
-# VERDICT
-# =========================================================
+# ============================================================
+# ACTION
+# ============================================================
 
-def verdict(score):
-    if score >= 85:
-        return "APPLY NOW"
+def action(score_value):
 
-    if score >= 70:
-        return "STRONG"
+    if score_value >= 85:
+        return "APPLY TODAY"
 
-    if score >= 55:
+    if score_value >= 75:
+        return "STRONG - REVIEW TODAY"
+
+    if score_value >= 65:
         return "REVIEW"
 
     return "IGNORE"
 
 
-# =========================================================
+# ============================================================
 # COLLECTION
-# =========================================================
+# ============================================================
 
 def collect(cfg):
+
     jobs = []
+
+    # --------------------------------------------------------
+    # Direct company ATS boards
+    # --------------------------------------------------------
 
     collectors = [
         ("ashby", fetch_ashby),
@@ -555,158 +1171,317 @@ def collect(cfg):
 
     for source, fn in collectors:
 
-        for company in cfg["sources"].get(source, []):
+        for company in (
+            cfg.get("sources", {})
+            .get(source, [])
+        ):
 
             try:
+
                 found = fn(company)
+
                 jobs.extend(found)
 
                 print(
-                    f"[{source}] {company}: "
-                    f"{len(found)} jobs"
+                    f"[{source}] "
+                    f"{company}: "
+                    f"{len(found)}"
                 )
 
             except Exception as exc:
+
                 print(
-                    f"[WARNING] {source}/{company}: {exc}"
+                    f"[WARNING] "
+                    f"{source}/{company}: "
+                    f"{exc}"
                 )
+
+    # --------------------------------------------------------
+    # Broad market feeds
+    # --------------------------------------------------------
+
+    broad_sources = [
+        ("remoteok", fetch_remoteok),
+        ("remotive", fetch_remotive),
+        ("weworkremotely", fetch_wwr),
+    ]
+
+    for name, fn in broad_sources:
+
+        try:
+
+            found = fn()
+
+            jobs.extend(found)
+
+            print(
+                f"[{name}] "
+                f"{len(found)}"
+            )
+
+        except Exception as exc:
+
+            print(
+                f"[WARNING] "
+                f"{name}: "
+                f"{exc}"
+            )
 
     return jobs
 
 
-# =========================================================
+# ============================================================
 # MAIN
-# =========================================================
+# ============================================================
 
 def main():
 
     cfg = yaml.safe_load(
-        (ROOT / "dev_config.yaml").read_text()
+        (
+            ROOT / "dev_config.yaml"
+        ).read_text(
+            encoding="utf-8"
+        )
     )
 
-    freshness_hours = cfg["candidate"]["freshness_hours"]
+    freshness = (
+        cfg.get("candidate", {})
+        .get("freshness_hours", 48)
+    )
+
+    target = (
+        cfg.get("candidate", {})
+        .get("daily_target", 20)
+    )
+
+    # --------------------------------------------------------
+    # Memory
+    # --------------------------------------------------------
 
     if STATE.exists():
+
         try:
-            seen = set(json.loads(STATE.read_text()))
+
+            seen = set(
+                json.loads(
+                    STATE.read_text(
+                        encoding="utf-8"
+                    )
+                )
+            )
+
         except Exception:
             seen = set()
+
     else:
         seen = set()
 
-    raw_jobs = collect(cfg)
+    # --------------------------------------------------------
+    # Collect
+    # --------------------------------------------------------
+
+    raw = collect(cfg)
+
+    # --------------------------------------------------------
+    # Deduplicate
+    # --------------------------------------------------------
 
     unique = {}
 
-    for job in raw_jobs:
-        jid = job.get("id") or job.get("link")
+    for job in raw:
+
+        jid = (
+            job.get("id")
+            or job.get("link")
+        )
 
         if jid:
-            unique[jid] = job
+            unique[str(jid)] = job
 
-    # Funnel diagnostics
-    fresh_count = 0
-    market_count = 0
-    role_match_count = 0
-    score_40_count = 0
-    score_55_count = 0
-    score_70_count = 0
+    counters = {
+        "fresh": 0,
+        "geography": 0,
+        "visa": 0,
+        "role": 0,
+        "fit65": 0,
+        "fit75": 0,
+        "fit85": 0,
+    }
 
-    scored = []
+    candidates = []
+
+    # --------------------------------------------------------
+    # Eligibility funnel
+    # --------------------------------------------------------
 
     for jid, job in unique.items():
 
-        # For debugging, freshness comes before seen-state.
-        # This lets us understand the full current market.
-        if not is_fresh(job, freshness_hours):
+        # STRICT <=48h
+        if not is_fresh(
+            job,
+            freshness,
+        ):
             continue
 
-        fresh_count += 1
+        counters["fresh"] += 1
 
-        market = relevant_market(job)
+        # INDIA / EU-EEA-SWISS / TRUE GLOBAL REMOTE
+        job_market = market(job)
 
-        if not market:
+        if not job_market:
             continue
 
-        market_count += 1
+        counters["geography"] += 1
 
-        score, reasons, concern, role_match = rank(job)
+        # VISA
+        visa, visa_ok = visa_check(
+            job,
+            job_market,
+        )
 
-        if not role_match:
+        if not visa_ok:
             continue
 
-        role_match_count += 1
+        counters["visa"] += 1
 
-        if score >= 40:
-            score_40_count += 1
+        # HARD ROLE EXCLUSIONS
+        rejection = hard_reject(job)
 
-        if score >= 55:
-            score_55_count += 1
-
-        if score >= 70:
-            score_70_count += 1
-
-        # Do not surface weak roles.
-        if score < 55:
+        if rejection:
             continue
 
-        # Don't show previously surfaced jobs again.
+        # ADMIN-HEAVY COS
+        if admin_cos(job):
+            continue
+
+        counters["role"] += 1
+
+        # SCORE
+        fit, reasons, concerns = score(
+            job,
+            job_market,
+            visa,
+        )
+
+        if fit < 65:
+            continue
+
+        counters["fit65"] += 1
+
+        if fit >= 75:
+            counters["fit75"] += 1
+
+        if fit >= 85:
+            counters["fit85"] += 1
+
+        # DEDUPE BETWEEN DAYS
         if jid in seen:
             continue
 
-        scored.append({
-            "score": score,
-            "verdict": verdict(score),
+        salary, _ = compensation(
+            job,
+            job_market,
+        )
+
+        candidates.append({
+            "score": fit,
+            "posted": job.get(
+                "publicado_em",
+                "",
+            ),
             "age_hours": age_hours(job),
-            "posted": job.get("publicado_em", ""),
-            "company": job.get("empresa", ""),
-            "role": job.get("titulo", ""),
-            "location": job.get("cidade", ""),
-            "market": market,
-            "source": job.get("fonte", ""),
-            "why_fit": "; ".join(reasons),
-            "concern": concern,
-            "job_link": job.get("link", ""),
+            "company": job.get(
+                "empresa",
+                "",
+            ),
+            "role": job.get(
+                "titulo",
+                "",
+            ),
+            "location": job.get(
+                "cidade",
+                "",
+            ),
+            "market": job_market,
+            "salary": salary,
+            "visa": visa,
+            "why_you_fit": "; ".join(
+                reasons
+            ),
+            "concern": (
+                "; ".join(concerns)
+                if concerns
+                else "None identified"
+            ),
+            "action": action(fit),
+            "source": job.get(
+                "fonte",
+                "",
+            ),
+            "job_link": job.get(
+                "link",
+                "",
+            ),
             "status": "NEW",
             "id": jid,
         })
 
-    scored.sort(
-        key=lambda row: (
-            row["score"],
-            -(row["age_hours"] or 999),
+    # --------------------------------------------------------
+    # Ranking
+    # --------------------------------------------------------
+
+    candidates.sort(
+        key=lambda x: (
+            x["score"],
+            -(x["age_hours"] or 999),
         ),
         reverse=True,
     )
 
-    target = cfg["candidate"]["daily_target"]
-
+    # If >=20 strong jobs exist, show ALL strong jobs.
     strong = [
-        row for row in scored
-        if row["score"] >= 70
+        x
+        for x in candidates
+        if x["score"] >= 75
     ]
 
-    # Target 20+, but never manufacture junk.
-    number_to_show = max(target, len(strong))
+    if len(strong) >= target:
+        selected = strong
+    else:
+        # Never manufacture weak jobs just to reach 20.
+        selected = candidates[:target]
 
-    selected = scored[:number_to_show]
+    # --------------------------------------------------------
+    # Output
+    # --------------------------------------------------------
 
-    today = dt.date.today().isoformat()
+    today = (
+        dt.datetime.now(
+            dt.timezone.utc
+        )
+        .date()
+        .isoformat()
+    )
 
-    path = OUT / f"dev_radar_{today}.csv"
+    path = (
+        OUT
+        / f"dev_radar_{today}.csv"
+    )
 
     fields = [
         "score",
-        "verdict",
-        "age_hours",
         "posted",
+        "age_hours",
         "company",
         "role",
         "location",
         "market",
-        "source",
-        "why_fit",
+        "salary",
+        "visa",
+        "why_you_fit",
         "concern",
+        "action",
+        "source",
         "job_link",
         "status",
         "id",
@@ -716,16 +1491,17 @@ def main():
         "w",
         newline="",
         encoding="utf-8",
-    ) as handle:
+    ) as f:
 
         writer = csv.DictWriter(
-            handle,
+            f,
             fieldnames=fields,
         )
 
         writer.writeheader()
         writer.writerows(selected)
 
+    # Remember only jobs actually surfaced.
     seen.update(
         row["id"]
         for row in selected
@@ -735,39 +1511,94 @@ def main():
         json.dumps(
             sorted(seen),
             indent=2,
-        )
+        ),
+        encoding="utf-8",
     )
 
+    # --------------------------------------------------------
+    # REPORT
+    # --------------------------------------------------------
+
     print()
-    print("============== DEV RADAR FUNNEL ==============")
-    print(f"Jobs collected:          {len(raw_jobs)}")
-    print(f"Unique jobs:             {len(unique)}")
-    print(f"Fresh <=48h:             {fresh_count}")
-    print(f"Right geography:         {market_count}")
-    print(f"Role evidence matched:   {role_match_count}")
-    print(f"Score >=40:              {score_40_count}")
-    print(f"Relevant >=55:           {score_55_count}")
-    print(f"Strong >=70:             {score_70_count}")
-    print(f"New jobs surfaced:       {len(selected)}")
-    print(f"Output:                  {path}")
-    print("===============================================")
+    print(
+        "============== DEV RADAR =============="
+    )
 
-    if selected:
-        print()
-        print("TOP RESULTS")
+    print(
+        f"Raw jobs collected:       {len(raw)}"
+    )
 
-        for row in selected:
-            print()
-            print(
-                f'{row["score"]} | '
-                f'{row["verdict"]} | '
-                f'{row["company"]} | '
-                f'{row["role"]} | '
-                f'{row["location"]}'
-            )
-    else:
+    print(
+        f"Unique jobs:              {len(unique)}"
+    )
+
+    print(
+        f"Fresh <=48h:              {counters['fresh']}"
+    )
+
+    print(
+        f"Eligible geography:       {counters['geography']}"
+    )
+
+    print(
+        f"Visa/work rights passed:  {counters['visa']}"
+    )
+
+    print(
+        f"Role exclusions passed:   {counters['role']}"
+    )
+
+    print(
+        f"Fit >=65:                 {counters['fit65']}"
+    )
+
+    print(
+        f"Strong >=75:              {counters['fit75']}"
+    )
+
+    print(
+        f"Exceptional >=85:         {counters['fit85']}"
+    )
+
+    print(
+        f"NEW jobs surfaced:        {len(selected)}"
+    )
+
+    print(
+        f"Output:                   {path}"
+    )
+
+    print(
+        "======================================="
+    )
+
+    for row in selected:
+
         print()
-        print("No new jobs surfaced in this run.")
+
+        print(
+            f'{row["score"]}/100 | '
+            f'{row["action"]}'
+        )
+
+        print(
+            f'{row["company"]} | '
+            f'{row["role"]}'
+        )
+
+        print(
+            f'{row["location"]} | '
+            f'{row["market"]} | '
+            f'Visa: {row["visa"]}'
+        )
+
+        print(
+            f'Why: {row["why_you_fit"]}'
+        )
+
+        print(
+            f'Concern: {row["concern"]}'
+        )
 
 
 if __name__ == "__main__":
